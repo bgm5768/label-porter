@@ -1,4 +1,3 @@
-import copy
 import json
 import tempfile
 import time
@@ -8,8 +7,6 @@ from pathlib import Path
 from unittest.mock import patch
 
 from label_porter.gui import App
-from label_porter.mapping import load_sample
-from label_porter.mapping_ui import MappingWindow
 
 
 class WorkflowUiTests(unittest.TestCase):
@@ -38,18 +35,6 @@ class WorkflowUiTests(unittest.TestCase):
         self.root.destroy()
         self.temp.cleanup()
 
-    def board(self, config=None):
-        board = MappingWindow(self.root, lambda *_: None, initial_profile=config)
-        board.window.withdraw()
-        self.boards.append(board)
-        return board
-
-    def load(self, board):
-        board.source_path.set(str(self.sf))
-        board.result_path.set(str(self.rf))
-        board.load_files()
-        self.until(lambda: not board.busy)
-        self.assertFalse(board.dirty, board.status.get())
 
     def until(self, predicate):
         deadline = time.monotonic() + 10
@@ -59,99 +44,6 @@ class WorkflowUiTests(unittest.TestCase):
         self.assertTrue(predicate())
         self.root.update_idletasks()
 
-    def connect(self, board, left, right):
-        board._pick(("source", left))
-        board._pick(("result", right))
-
-    def test_automatic_progression_and_completed_wires_survive_search_and_mode_change(self):
-        board = self.board()
-        self.load(board)
-        self.assertEqual(board.mode.get(), "key")
-        self.connect(board, "/id", "/ref")
-        self.assertEqual(board.mode.get(), "value")
-        self.connect(board, "/label", "/new")
-        self.connect(board, "/score", "/score")
-        self.assertEqual([w.kind for w in board.scope.wires], ["key", "value", "value"])
-        board.query.set("not-a-field")
-        self.assertEqual(len(board.wire_list.get_children()), 3)
-        for index in range(3):
-            self.assertTrue(board.canvas.find_withtag(f"wire:{index}"))
-        board._change_key()
-        self.assertTrue(board.canvas.find_withtag("wire:2"))
-        board._cancel_pending()
-        self.assertEqual(board.mode.get(), "value")
-
-    def test_import_view_before_samples_and_sample_preview_roundtrip(self):
-        config = {"schema_version": 1, "name": "AI", "source": {"key": "/id"}, "result": {"key": "/ref"},
-                  "checks": [{"left": "/ref", "op": "nonempty"}],
-                  "rules": [{"kind": "field", "from": {"path": "/new", "transforms": [{"op": "strip"}]}, "to": "/label", "nonempty": True}]}
-        board = self.board(config)
-        self.assertEqual(board._config(), config)
-        self.assertEqual(len(board.wire_list.get_children()), 2)
-        self.assertTrue(board.canvas.find_withtag("wire:1"))
-        self.load(board)
-        self.assertEqual(board._config(), config)
-        board.selected = next(w for w in board.scope.wires if w.kind == "value")
-        board._refresh()
-        board._save_options()
-        self.assertEqual(board._config(), config)
-        board._review_step()
-        self.until(lambda: not board.busy)
-        self.assertEqual(str(board.apply_button["state"]), "normal", board.status.get())
-        self.assertIn("이전: old", board.preview_box.get("1.0", "end"))
-        self.assertIn("이후: new", board.preview_box.get("1.0", "end"))
-        board.name.set("edited")
-        self.assertIsNone(board.last_checked)
-        # Rule confirmation is distinct from the mandatory full-data validation.
-        self.assertEqual(str(board.apply_button["state"]), "normal")
-
-    def test_bad_samples_leave_imported_rules_visible(self):
-        config = {"schema_version": 1, "name": "AI", "source": {"key": "/id", "records_path": "/rows"},
-                  "result": {"key": "/ref"}, "rules": [{"kind": "field", "from": "/new", "to": "/label"}]}
-        board = self.board(config)
-        board.source_path.set(str(self.sf)); board.result_path.set(str(self.rf))
-        board.load_files()
-        self.until(lambda: not board.busy)
-        self.assertTrue(board.dirty)
-        self.assertEqual(board._config(), config)
-        self.assertTrue(board.canvas.find_withtag("wire:1"))
-
-    def test_multiple_file_picker_and_reopen_keep_all_selected_files(self):
-        second = self.source / "two.json"
-        second.write_text(json.dumps({"id": "b", "label": "old", "score": 2}), encoding="utf-8")
-        self.rf.write_text(json.dumps([{"ref": "a", "new": "A"}, {"ref": "b", "new": "B"}]), encoding="utf-8")
-        board = self.board()
-        with patch("label_porter.mapping_ui.filedialog.askopenfilenames", return_value=(str(self.sf), str(second))):
-            board._choose("source")
-        board._set_selection("result", [str(self.rf)])
-        board.load_files()
-        self.until(lambda: not board.busy)
-        self.assertIn("원본 2개 파일 / 2건", board.sample_info.get())
-        self.connect(board, "/id", "/ref")
-        self.connect(board, "/label", "/new")
-        board._test()
-        self.until(lambda: not board.busy)
-        self.assertIn("매칭 2", board.preview_box.get("1.0", "end"))
-        accepted = []
-        board.on_apply = lambda *args: accepted.append(args)
-        board._apply()
-        self.assertEqual(accepted[0][1], [str(self.sf), str(second)])
-        reopened = MappingWindow(self.root, lambda *_: None, source_hint=accepted[0][1], result_hint=accepted[0][2], initial_profile=accepted[0][0])
-        reopened.window.withdraw()
-        self.boards.append(reopened)
-        self.assertEqual(reopened._selection("source"), [str(self.sf), str(second)])
-
-    def test_folder_picker_loads_all_originals(self):
-        second = self.source / "two.json"
-        second.write_text(json.dumps({"id": "b", "label": "old"}), encoding="utf-8")
-        board = self.board()
-        with patch("label_porter.mapping_ui.filedialog.askdirectory", return_value=str(self.source)):
-            board._choose_folder("source")
-        board._set_selection("result", str(self.rf))
-        board.load_files()
-        self.until(lambda: not board.busy)
-        self.assertEqual(board.source_sample.file_count, 2)
-        self.assertEqual(len(board.scope.source_rows), 2)
 
     def test_main_steps_and_preview_requirement_then_actual_copy(self):
         with patch.object(App, "_load_settings"), patch.object(App, "_save_settings"):

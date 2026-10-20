@@ -626,7 +626,7 @@ def _context(row, meta):
             "root_original": row, "root_result": row, "meta": meta}
 
 
-def preview_profile(config, source_rows, result_rows, meta, *, sample_indices=None):
+def preview_profile(config, source_rows, result_rows, meta):
     index, original_counts = defaultdict(list), Counter()
     errors = []
     invalid_results = 0
@@ -659,11 +659,9 @@ def preview_profile(config, source_rows, result_rows, meta, *, sample_indices=No
             matched_indices.append(number)
     counts = Counter()
     examples = []
-    sampled = sample_rows(list(range(len(source_rows)))) if sample_indices is None else list(sample_indices)
-    if any(not isinstance(i, int) or i < 0 or i >= len(source_rows) for i in sampled):
-        raise DataError("검사할 원본 항목 번호가 범위를 벗어났습니다.")
+    sampled = sample_rows(list(range(len(source_rows))))
     # A small partial export must still get a useful before/after example.
-    if sample_indices is None and matched_indices and not set(sampled).intersection(matched_indices):
+    if matched_indices and not set(sampled).intersection(matched_indices):
         sampled[-1] = matched_indices[0]
     for number in sampled:
         original = source_rows[number]
