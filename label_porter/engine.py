@@ -106,12 +106,13 @@ def run(source_directory: Path | str, result_files: list[Path | str], output_dir
 def _execute_run(run_dir, source, result_paths, inventory, selected, config,
                  preview, progress, cancel, split_output):
     data_dir = run_dir / "data"
-    report = Reports(run_dir / "reports", split_output=split_output, preview=preview)
+    report = Reports(run_dir / "reports", split_output=split_output, preview=preview, result_spec=config["result"])
     summary = {"version": 4, "profile": config["name"], "preview": bool(preview), "status": "running",
                "started_at": _now(), "source_directory": str(source), "run_directory": str(run_dir),
                "split_output": bool(split_output), "partition_status": "pending" if split_output else "disabled",
                "source_files": len(inventory), "label_files": len(selected), "source_records": 0, "result_records": 0}
-    manifest = {"source_directory": str(source), "preview": bool(preview), "result_files": [], "files": []}
+    manifest = {"source_directory": str(source), "preview": bool(preview), "result_files": [], "files": [],
+                "examine_original_inputs": True}
     atomic_text(run_dir / "profile.json", json.dumps(config, ensure_ascii=False, indent=2))
     atomic_text(run_dir / "run_status.json", json.dumps(summary, ensure_ascii=False, indent=2))
 
@@ -158,6 +159,7 @@ def _execute_run(run_dir, source, result_paths, inventory, selected, config,
                 manifest["result_files"].append({"path": str(path), "error": str(exc)})
                 continue
             manifest["result_files"].append({"path": str(path), "sha256": document.sha256, "records": len(rows)})
+            report.result_archive.register(path, document, rows)
             invalid_rows = 0
             last_index_update = time.monotonic()
             emit("result_index", f"결과 {index}/{len(result_paths)} · 연결키 검사 0/{len(rows):,}건", 0, len(rows))
@@ -216,6 +218,7 @@ def _execute_run(run_dir, source, result_paths, inventory, selected, config,
                 document = read_document(base / relative, config["source"].get("encoding", "utf-8-sig"), "json")
                 found = list(records(document, config["source"]))
                 record_positions[relative] = [(doc_index, pointer) for doc_index, pointer, _ in found]
+                report.source_input(relative.as_posix(), record_positions[relative])
                 if not found:
                     report.record("source_file", "invalid_source", source_file=relative.as_posix(), reason="선택한 레코드 배열이 비어 있습니다.")
                 if preview:
@@ -333,7 +336,8 @@ def _execute_run(run_dir, source, result_paths, inventory, selected, config,
         emit("partition", "검토 대상은 examine으로, 정상 데이터는 처리 상태별로 분리합니다.")
         export_partitions(run_dir, base, selected, record_positions, changed_positions,
                           manifest_by_file, config["source"], summary, manifest, preview, checkpoint, emit,
-                          report.examine_positions, report.examine_files, split_output, report.examine_categories)
+                          report.examine_positions, report.examine_files, split_output, report.examine_categories, original_source=source)
+        report.result_archive.export(run_dir, preview, checkpoint, emit)
         summary["status"] = "completed_with_issues" if any(report.counts[key] for key in ISSUES) or report.advisory_rows or report.counts["no_result"] else "completed"
     except Cancelled as exc:
         summary.update(status="cancelled", error=str(exc))

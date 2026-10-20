@@ -72,8 +72,10 @@ def _copy_with_hash(source, destination, checkpoint):
 
 def export_partitions(run_dir: Path, source_base: Path, selected_files, record_positions,
                       changed_positions, file_manifest, spec, summary, manifest,
-                      preview, checkpoint, progress, examine_positions=None, examine_files=None, split_output=True, examine_categories=None):
+                      preview, checkpoint, progress, examine_positions=None, examine_files=None, split_output=True, examine_categories=None,
+                      original_source=None):
     """A record goes to exactly one group; unparseable files remain unclassified."""
+    from .examine import label_path
     examine_positions, examine_files = examine_positions or {}, examine_files or set()
     examine_categories = examine_categories or {}
     summary["partition_status"] = "in_progress"
@@ -88,7 +90,7 @@ def export_partitions(run_dir: Path, source_base: Path, selected_files, record_p
             checkpoint()
             positions = record_positions.get(relative)
             changed = changed_positions.get(relative, set())
-            document = None
+            documents = {}
             if positions is None:
                 groups = {"unclassified": None}
             else:
@@ -109,7 +111,7 @@ def export_partitions(run_dir: Path, source_base: Path, selected_files, record_p
                     for ordinal, address in enumerate(positions, 1):
                         if address not in examined: continue
                         category = "file_errors" if relative in examine_files else examine_categories.get(relative, {}).get(address, "review")
-                        target = Path("examine") / category / "labels" / relative / f"{ordinal:08d}.json"
+                        target = label_path(category, relative, ordinal)
                         exports.append((group, [address], target, category))
                 elif group == "unclassified" or (group == "examine" and positions == [] and relative in examine_files):
                     exports.append((group, members, Path("examine/file_errors/files/source") / relative, "file_errors"))
@@ -121,13 +123,17 @@ def export_partitions(run_dir: Path, source_base: Path, selected_files, record_p
                     counts[group] += len(members)
                 file_counts[group] += 1
                 destination = run_dir / output_relative
+                input_base = original_source if original_source is not None and group in ("examine", "unclassified") else source_base
+                file_entry = file_manifest.get(relative, {})
+                expected_hash = file_entry.get("source_sha256") if input_base == original_source else file_entry.get("output_sha256", file_entry.get("source_sha256"))
                 whole_file = positions is None or len(members) == len(positions)
                 if whole_file:
                     addresses = [(address, address) for address in members or []]
                 else:
+                    document = documents.get(input_base)
                     if document is None:
-                        document = read_document(source_base / relative, spec.get("encoding", "utf-8-sig"), "json")
-                        expected_hash = file_manifest[relative].get("output_sha256", file_manifest[relative]["source_sha256"])
+                        document = read_document(input_base / relative, spec.get("encoding", "utf-8-sig"), "json")
+                        documents[input_base] = document
                         if document.sha256 != expected_hash:
                             raise DataError(f"분리 저장 중 파일 내용이 달라졌습니다: {relative}")
                     subset, addresses = _single(document, spec, members[0]) if group == "examine" else _subset(document, spec, set(members))
@@ -137,8 +143,8 @@ def export_partitions(run_dir: Path, source_base: Path, selected_files, record_p
                          "path": output_relative.as_posix(), "records": len(members) if members is not None else None}
                 if not preview:
                     if whole_file:
-                        digest = _copy_with_hash(source_base / relative, destination, checkpoint)
-                        if digest != file_manifest[relative]["output_sha256"]:
+                        digest = _copy_with_hash(input_base / relative, destination, checkpoint)
+                        if digest != expected_hash:
                             raise DataError(f"분리 복사본 해시가 일치하지 않습니다: {relative}")
                     else:
                         write_document(destination, subset)

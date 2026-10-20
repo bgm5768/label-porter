@@ -311,7 +311,7 @@ class PorterTests(unittest.TestCase):
         self.write(self.result, {"source_id": "b", "corrected_label": "new"})
         result = run(self.source, [self.result], self.output, self.config)
         changed = read_document(result.directory / "changed" / "labels" / "rows.jsonl")
-        unchanged = [read_document(p).docs[0] for p in sorted((result.directory / "examine/unmatched/labels/rows.jsonl").glob("*.json"))]
+        unchanged = [read_document(p).docs[0] for p in sorted((result.directory / "examine/unmatched/labels/rows.jsonl").glob("*.jsonl"))]
         self.assertEqual(changed.docs, [{"id": "b", "label": "new"}])
         self.assertEqual([item["id"] for item in unchanged], ["a", "c"])
         index = [json.loads(line) for line in (result.directory / "reports" / "partition_index.jsonl").read_text().splitlines()]

@@ -58,7 +58,7 @@ class DashboardTests(unittest.TestCase):
         self.assertEqual(len(archive), 7)
         orphan = next(row for row in archive if row["status"] == "orphan_result")
         self.assertEqual(orphan["platform_record"]["id"], "z")
-        self.assertEqual(json.loads((outcome.directory / orphan["examine_data"]).read_text(encoding="utf-8"))["id"], "z")
+        self.assertEqual(json.loads((outcome.directory / orphan["examine_data"]).read_text(encoding="utf-8"))[0]["id"], "z")
         self.assertEqual(s["examine_category_counts"], {"review": 3, "file_errors": 1, "unmatched": 2, "excluded": 1})
         self.assertEqual(json.loads((self.source / "all.json").read_text()), self.original)
         verify(outcome.directory)
@@ -108,7 +108,7 @@ class DashboardTests(unittest.TestCase):
         broken = self.base / "broken-result.json"; broken.write_text("{broken", encoding="utf-8")
         outcome = run(self.source, [self.result, twin, broken], self.base / "output", self.config)
         archived = [json.loads(p.read_text(encoding="utf-8")) for p in (outcome.directory / "examine/review/results").rglob("*.json")]
-        self.assertCountEqual([r["label"] for r in archived], ["one", "two"])
+        self.assertCountEqual([r[0]["label"] for r in archived], ["one", "two"])
         raw = list((outcome.directory / "examine/file_errors/files/results").rglob("broken-result.json"))
         self.assertEqual(len(raw), 1)
         self.assertEqual(raw[0].read_bytes(), broken.read_bytes())

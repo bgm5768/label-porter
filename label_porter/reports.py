@@ -12,7 +12,7 @@ from .formats import atomic_text
 from .review_report import write_review
 from .detail_store import DetailStore
 from .result_dashboard import write_dashboard
-from .examine import category_for, result_path
+from .examine import category_for, result_path, label_path, ResultArchive
 
 
 STATUS = {
@@ -31,7 +31,7 @@ def csv_safe(value):
 
 
 class Reports:
-    def __init__(self, directory: Path, split_output=False, preview=False):
+    def __init__(self, directory: Path, split_output=False, preview=False, result_spec=None):
         self.preview = preview
         self.directory = directory
         self.split_output = bool(split_output)
@@ -43,6 +43,8 @@ class Reports:
         self.examine_files = set()
         self.examine_categories = {}
         self.examine_counts = Counter()
+        self.result_archive = ResultArchive(result_spec or {})
+        self.source_addresses = {}
         self.details = DetailStore(directory)
         self._all_details = (directory / "record_details.jsonl").open("w", encoding="utf-8")
         self._examine_number = 0
@@ -69,6 +71,31 @@ class Reports:
         self.result_catalog[(file, number)] = {"scope": "result", "status": "pending", "상태": STATUS["pending"],
             "원본": "", "보완": file, "키": key, "사유": "중단 또는 실패로 처리가 끝나지 않았습니다.",
             "위치": str(number), "link": "", "issues": 0, "groups": ["result"], "_record": record}
+
+    def source_input(self, file, positions):
+        self.source_addresses[file] = {f"doc:{d}{p}": ordinal for ordinal, (d, p) in enumerate(positions, 1)}
+
+    def _archive_links(self, detail, category):
+        sources = [(detail["source_file"], detail["record_path"])]
+        sources.extend((row["file"], row["record_path"]) for row in detail.get("source_candidates", []))
+        originals = []
+        for file, pointer in sources:
+            ordinal = self.source_addresses.get(file, {}).get(pointer)
+            if ordinal:
+                originals.append(label_path(category, file, ordinal).as_posix())
+        if detail["scope"] == "source_file":
+            originals.append((Path("examine/file_errors/files/source") / detail["source_file"]).as_posix())
+        results = [(detail["result_file"], detail["result_row"])]
+        results.extend((row["file"], row["number"]) for row in detail.get("platform_candidates", []))
+        incoming = []
+        for file, number in results:
+            target = self.result_archive.request(category, file, number)
+            if target:
+                incoming.append(target)
+        detail["examine_sources"] = list(dict.fromkeys(originals))
+        detail["examine_results"] = list(dict.fromkeys(incoming))
+        if incoming:
+            detail["examine_data"] = incoming[0]
 
     def record(self, scope, status, source_file="", record_path="", key="", result_file="", result_row="", reason="", changed_fields=0, evidence=None):
         self.counts[status] += 1
@@ -114,28 +141,24 @@ class Reports:
         detail = {"status": status, "scope": scope, "source_file": source_file, "record_path": record_path,
                   "key": key, "result_file": result_file, "result_row": result_row, "reason": reason,
                   "preview": self.preview, **(evidence or {})}
-        self._all_details.write(json.dumps(detail, ensure_ascii=False, allow_nan=False) + "\n")
         if attention:
+            self._archive_links(detail, category)
             self.examine_counts[category] += 1
             self._examine_number += 1
             if not self.preview:
                 base = self.directory.parent
-                if scope == "result" and result_row:
-                    record = detail.get("platform_record", self.result_catalog.get((result_file, result_row), {}).get("_record"))
-                    if "platform_record" in detail or record is not None:
-                        target = result_path(category, result_file, result_row)
-                        atomic_text(base / target, json.dumps(record, ensure_ascii=False, allow_nan=False, indent=2) + "\n")
-                        detail["examine_data"] = target.as_posix()
-                elif scope == "result" and result_file:
+                if scope == "result" and result_file and not result_row:
                     target = result_path(category, result_file)
                     try:
                         (base / target).parent.mkdir(parents=True, exist_ok=True)
                         shutil.copyfile(result_file, base / target)
                         detail["examine_data"] = target.as_posix()
+                        detail["examine_results"] = [target.as_posix()]
                     except OSError as exc:
                         detail["archive_error"] = str(exc)
                 atomic_text(base / "examine" / category / "details" / f"{self._examine_number:08d}.json",
                             json.dumps(detail, ensure_ascii=False, allow_nan=False, indent=2) + "\n")
+        self._all_details.write(json.dumps(detail, ensure_ascii=False, allow_nan=False) + "\n")
         link = review_link or self.details.add(detail)
         groups = ["source", "output"] if scope == "source" else ["result"] if scope == "result" and result_row else ["files"]
         if status in ("updated", "planned_update", "unchanged") and not attention and scope == "source":

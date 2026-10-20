@@ -120,6 +120,13 @@ class RebuildTests(unittest.TestCase):
             self.assertEqual(detail["final_record"], actual)
             self.assertTrue(detail["applied_with_advisories"])
             self.assertEqual(outcome.summary["partition_records"]["examine"], 1)
+            archived = outcome.directory / "examine/review/labels/a.json/00000001.json"
+            self.assertEqual(archived.read_bytes(), path.read_bytes())
+            incoming_files = list((outcome.directory / "examine/review/results").rglob("*.json"))
+            self.assertEqual(len(incoming_files), 1)
+            self.assertEqual(incoming_files[0].read_bytes(), result.read_bytes())
+            from scripts.verify_run import verify
+            verify(outcome.directory)
 
     def test_profile_review_and_validation(self):
         config = load_config(PROFILE)

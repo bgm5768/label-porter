@@ -1,6 +1,6 @@
 # 라벨 포터
 
-**버전 관리 기준: v1 (2026-10-20)** — 프로그램 2.4.0을 첫 Git 기준 버전으로 보관합니다. `v1` 태그로 이 상태를 다시 확인할 수 있습니다. 현재 프로그램은 **2.14.1**이며 변경 내역은 [CHANGELOG.md](CHANGELOG.md)에 기록합니다.
+**버전 관리 기준: v1 (2026-10-20)** — 프로그램 2.4.0을 첫 Git 기준 버전으로 보관합니다. `v1` 태그로 이 상태를 다시 확인할 수 있습니다. 현재 프로그램은 **2.15.0**이며 변경 내역은 [CHANGELOG.md](CHANGELOG.md)에 기록합니다.
 
 플랫폼 DB에 접근하지 않고, 어드민에서 내려받은 작업 결과를 원본 라벨링 JSON에 반영하는 Windows 데스크톱 프로그램입니다. 모든 데이터 처리는 로컬에서 이루어집니다. 외부 서비스나 AI 호출이 없습니다.
 
@@ -18,7 +18,7 @@
 
 ## 실행
 
-- Windows 실행 파일: `dist/v2.14.1/LabelPorter.exe`를 더블클릭합니다. Python 설치가 필요하지 않습니다.
+- Windows 실행 파일: `dist/v2.15/LabelPorter.exe`를 더블클릭합니다. Python 설치가 필요하지 않습니다.
 - 소스 실행: Python 3.11 이상에서 `python -m label_porter` 또는 `start.cmd`를 실행합니다. 먼저 `python -m pip install -r requirements.txt`로 문서 뷰어 의존성을 설치합니다. Windows 공식 Python의 Tkinter를 사용합니다. 실행 파일에는 문서 뷰어가 내장되어 별도 설치가 필요 없습니다.
 - 상세 규칙 설명: [사용설명.md](사용설명.md)
 - 후처리 가능 수준과 제한: [후처리_지원범위.md](후처리_지원범위.md) — 프로그램의 사용 방법 화면에도 포함됩니다.
@@ -83,7 +83,7 @@
 
 실패/중단된 반영에는 부분 복사본이 남을 수 있으며, `run_status.json`과 HTML 보고서에 표시합니다. 다음 실행은 새 순번으로 저장됩니다. 실패/중단된 결과를 완성본으로 사용하지 마세요.
 
-통합 JSON은 레코드 단위로, 개별 JSON은 파일 단위로 분리합니다. 원래 파일명·상대 경로·라벨 구조를 유지하며 통합 JSON의 바깥 메타데이터는 변경하지 않습니다. 검토·오류·연결 누락 대상은 `examine`에 분리하며 정상 변경/미변경 그룹에 중복으로 넣지 않습니다. 결과 없는 원본과 원본 없는 보완 데이터는 따로 집계합니다. 보완 쪽 오류·미매칭 원문도 분류별 `results`에 1건씩 저장합니다. 정상 데이터 분리를 꺼도 examine은 저장합니다. 미리보기는 분리 예정 집계만 계산하고 데이터 파일을 만들지 않습니다.
+통합 JSON은 레코드 단위로, 개별 JSON은 파일 단위로 분리합니다. 원래 파일명·상대 경로·라벨 구조를 유지하며 통합 JSON의 바깥 메타데이터는 변경하지 않습니다. 검토·오류·연결 누락 대상은 `examine`에 분리하며 정상 변경/미변경 그룹에 중복으로 넣지 않습니다. 결과 없는 원본과 원본 없는 보완 데이터는 따로 집계합니다. 검토 대상에 연결된 보완 데이터도 분류별 `results`에 1건씩 저장합니다. `labels`는 처리 전 원본이고, 실제 처리 후 값은 `data`에 있습니다. 정상 데이터 분리를 꺼도 examine은 저장합니다. 미리보기는 분리 예정 집계만 계산하고 데이터 파일을 만들지 않습니다.
 
 분리 대상은 라벨 JSON입니다. 원본 폴더에 함께 들어 있는 다른 파일은 전체 `data/` 복사본에 보존합니다. 별도 원천데이터 폴더를 연결하거나 이미지·오디오를 두 그룹으로 분리하는 기능은 없습니다. 예전 규칙 파일의 `assets` 설정은 불러올 때 제외되며 라벨 반영 규칙은 유지됩니다.
 
@@ -135,8 +135,8 @@ Windows 단일 실행 파일 빌드:
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt pyinstaller==6.22.3
-.\.venv\Scripts\python.exe -m PyInstaller --noconfirm --clean --distpath 'dist\v2.14.1' --workpath 'build\v2.14.1' LabelPorter.spec
-Copy-Item -LiteralPath '사용설명.md','AI_규칙작성_가이드.md','후처리_지원범위.md','THIRD_PARTY_NOTICES.txt' -Destination 'dist\v2.14.1'
+.\.venv\Scripts\python.exe -m PyInstaller --noconfirm --clean --distpath 'dist\v2.15' --workpath 'build\v2.15' LabelPorter.spec
+Copy-Item -LiteralPath '사용설명.md','AI_규칙작성_가이드.md','후처리_지원범위.md','THIRD_PARTY_NOTICES.txt' -Destination 'dist\v2.15'
 ```
 
 ## 저장소에 포함하는 파일
@@ -155,9 +155,11 @@ Copy-Item -LiteralPath '사용설명.md','AI_규칙작성_가이드.md','후처�
 
 `examine`은 `unmatched`(짝 없음), `review`(검토/오류), `excluded`(조건 제외), `file_errors`(파일 오류)로 나뉩니다. 분류는 중복 없이 저장하며 파일 단위 오류를 먼저 구분합니다.
 
-- 각 분류의 `labels/원본 상대경로/00000001.json`에는 원본 기준 출력 레코드를 **1건씩** 저장합니다. 원래 파일이 배열·중첩 구조였다면 해당 구조와 메타데이터를 유지합니다. 파일 번호는 원본 파일 내 레코드 순번입니다.
-- `results/입력파일 식별값/00000001.json`은 연결할 원본이 없거나 오류가 있는 보완 레코드입니다. 같은 이름의 보완 파일도 서로 섞이지 않습니다.
-- `details/00000001.json`에는 해당 건의 원본·보완 데이터와 검토 사유를 보관합니다. `reports/partition_index.jsonl`(정상 분리 옵션을 끈 경우 `examine_index.jsonl`)은 원본 주소와 개별 출력 파일을 연결합니다.
+- 각 분류의 `labels/원본 상대경로/00000001.json`에는 수정 전 원본 레코드를 **1건씩** 저장합니다. 원래 파일이 배열·중첩 구조였다면 해당 구조와 메타데이터를 유지합니다. 파일 번호는 원본 파일 내 레코드 순번입니다.
+- `results/입력파일 식별값/00000001.json`에는 검토 대상에 연결된 보완 레코드를 **1건씩** 저장합니다. 검토·조건 제외에도 원본과 보완 양쪽을 각각 보관하며, 짝이 없으면 존재하는 쪽만 저장합니다. 중복 KEY 후보도 각각 저장하고 같은 이름의 입력 파일은 서로 섞이지 않습니다.
+- `details/00000001.json`은 검토 사유·비교 근거 문서입니다. `examine_sources`와 `examine_results`에서 해당 건의 원본·보완 파일 경로를 확인합니다. 라벨 데이터로 재사용할 파일은 `labels`와 `results`에 있습니다. `reports/partition_index.jsonl`(정상 분리 옵션을 끈 경우 `examine_index.jsonl`)은 원본 주소와 개별 출력 파일을 연결합니다.
 - 해석할 수 없는 파일은 `file_errors/files/source` 또는 `file_errors/files/results`에 파일 자체를 복사합니다. 읽을 수 없어 복사가 불가능한 경우 details에 오류를 기록합니다.
 
 전체 결과는 기존처럼 `data`에 보존합니다. 정상 변경/미변경 분리 옵션을 꺼도 위 분류는 저장하며, 검증 미리보기에서는 파일을 생성하지 않고 보고서에 분리 예정 경로를 기록합니다. 이전 버전의 결과 폴더 구조는 자동 변경하지 않습니다.
+
+검토용 `labels`와 `results`는 각각 입력의 필드·배열/객체·중첩 구조와 바깥 메타데이터를 유지합니다. 통합 JSON 전체를 복사하지 않고 해당 레코드만 남깁니다. 한 건짜리 입력은 파일 바이트를 그대로 복사하며, 여러 건에서 추출할 때는 들여쓰기·숫자 표기 등의 직렬화 형식은 달라질 수 있습니다. JSONL/NDJSON은 한 건의 줄 단위 파일로, CSV는 헤더와 해당 행으로 저장합니다. 처리된 값이 일부 반영되어도 `examine/labels`는 수정 전 원본이며, 처리 후 값은 `data`와 상세 보고서에서 확인합니다. 레코드 경계를 확인할 수 없는 파일 오류에 한해서는 안전하게 자를 수 없으므로 입력 파일 전체를 `file_errors/files`에 보관합니다.

@@ -70,7 +70,8 @@ def verify_partitions(directory, manifest, summary, config):
             before, after = address(original, old_address), address(combined, old_address)
             expected_group = "examine" if (source_file, old_address) in examined else "unchanged" if equivalent(before, after) else "changed"
             assert row["group"] == expected_group, "실제 변경 여부와 분리 그룹이 다릅니다."
-            assert equivalent(address(subsets[row["partition_file"]], row["partition_record_path"]), after), "분리본 내용이 전체 결과와 다릅니다."
+            expected_record = before if row["group"] == "examine" and manifest.get("examine_original_inputs") else after
+            assert equivalent(address(subsets[row["partition_file"]], row["partition_record_path"]), expected_record), "분리본 내용이 저장 기준과 다릅니다."
             counts[row["group"]] += 1
         assert seen_source == expected_addresses, "분리본에 원본 레코드가 누락되었습니다."
     assert counts == summary["partition_records"], "분리 집계 불일치"
