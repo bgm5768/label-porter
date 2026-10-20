@@ -134,7 +134,7 @@ class App(Workflow):
         self.edit_rule_button.pack(side="left")
         self.save_rule_button = ttk.Button(row, text="규칙 내보내기", command=self._save_profile, state="disabled")
         self.save_rule_button.pack(side="left", padx=8)
-        ttk.Label(project, text="연결 확인 화면은 읽기 전용입니다. 수정이 필요하면 ‘AI에 수정 요청’으로 새 규칙을 받아 불러오세요.", style="Muted.TLabel", wraplength=720).pack(anchor="w", pady=5)
+        ttk.Label(project, text="연결 확인 화면은 읽기 전용입니다. 수정이 필요하면 AI에 현재 규칙과 변경 내용을 전달해 새 규칙을 받아 불러오세요.", style="Muted.TLabel", wraplength=720).pack(anchor="w", pady=5)
         ttk.Label(inputs, textvariable=self.input_hint, wraplength=760, foreground="#245eb7").pack(fill="x", pady=(0, 14))
         group = card(inputs, "1. 보완 전 원본 라벨 폴더", "여러 개별 JSON 또는 여러 건을 담은 통합 JSON 모두 가능합니다. 하위 폴더도 포함합니다.")
         self._path_row(group, self.source, self._choose_source)
@@ -375,18 +375,11 @@ class App(Workflow):
         self.current_step, self.route = 0, "mapping"
         self.steps.pack_forget(); self.tools_host.pack_forget(); self.mapping_host.pack(fill="both", expand=True)
         self.page_title.set("AI 규칙 · 필드 연결 확인")
-        self.page_caption.set(config["name"] + " · 읽기 전용 · 실제 데이터 검증은 다음 단계에서 진행합니다.")
+        self.page_caption.set(config["name"] + " · 읽기 전용 · 한 쌍 프리뷰 확인 가능 · 전체 데이터 검증은 다음 단계에서 진행합니다.")
         self._sync_actions()
         self.footer.pack_forget()
         self.mapping = RuleReview(self.mapping_host, config, self._finish_mapping,
-                                  lambda: self._show_step(0), self._copy_revision)
-
-    def _copy_revision(self, config, request):
-        prompt = ("아래 작성 가이드와 현재 규칙을 기준으로 수정해 주세요. 함께 제공한 원본 라벨과 플랫폼 결과를 다시 대조하세요.\n\n"
-                  "수정 요청:\n" + request + "\n\n현재 규칙:\n```json\n" + json.dumps(config, ensure_ascii=False, indent=2)
-                  + "\n```\n\n작성 가이드:\n" + self.ai_guide_text)
-        self.root.clipboard_clear()
-        self.root.clipboard_append(prompt)
+                                  lambda: self._show_step(0), source_hint=self.source.get(), result_hints=self.result_paths)
 
     def _finish_mapping(self):
         self.mapping = None; self._advance_inputs()

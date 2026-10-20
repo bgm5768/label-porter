@@ -135,7 +135,10 @@ def validate_value(value, rule):
 
 def _apply_rules(rules, context, changes, notes, prefix=""):
     for rule in rules:
-        if not all(condition(item, context) for item in rule.get("when", [])):
+        active = all(condition(item, context) for item in rule.get("when", []))
+        if context.get("_observe"):
+            context["_observe"](rule, context, context.get("_preview_prefix", "") + prefix, active)
+        if not active:
             continue
         for check in rule.get("checks", []):
             if not condition(check, context):
@@ -236,11 +239,13 @@ def _assertions(assertions, candidate, result, context):
                     raise ReviewRequired("존재하지 않는 객체를 가리키는 태그가 있습니다.")
 
 
-def apply_record(original, result, config, meta, advisories=None):
+def apply_record(original, result, config, meta, advisories=None, *, observer=None):
     candidate = copy.deepcopy(original)
     context = {"source": candidate, "original": original, "result": result,
                "root_source": candidate, "root_original": original, "root_result": result, "meta": meta,
                "advisories": advisories if advisories is not None else []}
+    if observer is not None:
+        context["_observe"] = observer
     if not all(condition(check, context) for check in config.get("include_when", [])):
         return original, [], ["반영 대상 조건에 해당하지 않아 원본을 보존했습니다."], "excluded"
     for check in config.get("checks", []):

@@ -20,7 +20,7 @@ def main():
     root = tk.Tk()
     errors = []
     root.report_callback_exception = lambda *args: errors.append(args)
-    output = Path('build/ui-v21')
+    output = Path('outputs/ui-v27')
     output.mkdir(parents=True, exist_ok=True)
     def wait(predicate):
         end = time.monotonic()+20
@@ -33,8 +33,7 @@ def main():
         root.update()
         time.sleep(.2)  # Allow the desktop window animation to settle before capture.
         root.update()
-        x, y = root.winfo_rootx(), root.winfo_rooty()
-        ImageGrab.grab(bbox=(x,y,x+root.winfo_width(),y+root.winfo_height())).save(output/(name+'.png'))
+        ImageGrab.grab(window=int(root.frame(), 16)).save(output/(name+'.png'))
     with tempfile.TemporaryDirectory(prefix='porter_ui_') as temp:
         folder = Path(temp)
         originals = folder/'원본라벨'; originals.mkdir()
@@ -58,7 +57,17 @@ def main():
             board = app.mapping
             capture('02-connections')
             board.pages.select(1)
-            capture('03-rule-check')
+            board.preview.source.set(str(originals/'A001.json'))
+            board.preview.results = [str(results)]
+            board.preview.result_label.set(str(results))
+            board.preview.load(); wait(lambda: not board.preview.busy)
+            assert board.preview.pair['key'] == 'A001', board.preview.status.get()
+            capture('03-paired-values')
+            board.preview.views.select(1); root.update()
+            capture('03-json-pair')
+            root.geometry('1040x680+20+20'); root.update()
+            capture('03-small-preview')
+            root.geometry('1280x880+20+20'); root.update()
             board.apply_button.invoke(); root.update()
             assert app.current_step==1, (board.status.get(), app.status.get(), errors)
             app.source.set(str(originals)); app.result_paths = [str(results)]

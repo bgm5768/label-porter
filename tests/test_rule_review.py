@@ -57,8 +57,7 @@ class ReviewUiTests(unittest.TestCase):
         setup_style(self.root)
         self.profile = load_config(Path('profiles/013_audio.json'))
         self.requests, self.accepted = [], []
-        self.review = RuleReview(self.root, self.profile, lambda:self.accepted.append(True), lambda:None,
-                                 lambda *args:self.requests.append(args))
+        self.review = RuleReview(self.root, self.profile, lambda:self.accepted.append(True), lambda:None)
         self.root.update()
 
     def tearDown(self):
@@ -77,7 +76,7 @@ class ReviewUiTests(unittest.TestCase):
         self.review._select(SimpleNamespace(x=box[0]+5, y=box[1]+5))
         self.assertIn('require_same_keys', self.review.detail.get('1.0','end'))
         self.assertEqual(json.loads(self.review.raw_box.get('1.0','end')), before)
-        self.assertIn('references', self.review.conditions_box.get('1.0','end'))
+        self.assertEqual([self.review.pages.tab(t, 'text') for t in self.review.pages.tabs()], ['필드 연결', '필드 연결 프리뷰', '규칙 JSON'])
         self.assertEqual(str(self.review.detail['state']), 'disabled')
         self.assertEqual(str(self.review.raw_box['state']), 'disabled')
         self.assertFalse(self.review.canvas.bind('<B1-Motion>'))
@@ -86,10 +85,12 @@ class ReviewUiTests(unittest.TestCase):
         self.assertEqual(self.accepted, [True])
         self.assertEqual(self.profile, before)
 
-    def test_ai_revision_requires_request_and_supplies_current_full_profile(self):
-        self.review._copy_revision()
-        self.assertEqual(self.requests, [])
-        self.review.revision_text.insert('1.0', '시간이 밀리초인지 확인하고 필요한 변환을 넣어 주세요.')
-        self.review._copy_revision()
-        self.assertEqual(self.requests[0][0], self.profile)
-        self.assertIn('밀리초', self.requests[0][1])
+    def test_preview_is_optional_and_read_only(self):
+        self.review.pages.select(1)
+        self.review.preview.load_button.invoke()
+        self.assertIn("선택하세요", self.review.preview.status.get())
+        self.assertTrue(all(str(box["state"]) == "disabled" for box in self.review.preview.json_boxes))
+        self.assertFalse(hasattr(self.review, "revision_text"))
+        self.review.apply_button.invoke()
+        self.assertEqual(self.accepted, [True])
+        self.assertTrue(self.review.preview.closed)

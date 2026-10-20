@@ -25,6 +25,9 @@ def rebuild_items(rule, context, changes, notes, prefix):
         target = {}
         sub = {**context, "source": target, "original": {}, "result": item,
                "meta": {**context["meta"], "item_number": number}}
+        if context.get("_observe"):
+            sub["_preview_prefix"] = context.get("_preview_prefix", "") + prefix + rule["to"] + "/" + str(number - 1)
+            sub["_preview_rebuilt"] = True
         _apply_rules(rule["rules"], sub, [], [])
         rebuilt.append(target)
 

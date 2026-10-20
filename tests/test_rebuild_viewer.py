@@ -168,7 +168,7 @@ class ViewerTests(unittest.TestCase):
             self.assertIn("최상위 항목 1개", self.viewer.status.get())
 
     def test_new_profile_opens_readonly_review(self):
-        review = RuleReview(self.root, load_config(PROFILE), lambda *args: None, lambda: None, lambda *args: None)
+        review = RuleReview(self.root, load_config(PROFILE), lambda *args: None, lambda: None)
         self.root.update_idletasks()
         self.assertEqual(review.profile, load_config(PROFILE))
         review._close()

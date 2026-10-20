@@ -35,7 +35,8 @@ def self_test(output):
         app._wizard()
         editor = app.mapping
         assert editor.profile == config
-        assert "필드 연결" in [editor.pages.tab(tab, "text") for tab in editor.pages.tabs()]
+        assert [editor.pages.tab(tab, "text") for tab in editor.pages.tabs()] == ["필드 연결", "필드 연결 프리뷰", "규칙 JSON"]
+        assert all(str(box["state"]) == "disabled" for box in editor.preview.json_boxes)
         assert editor.raw_box["state"] == "disabled"
         assert not editor.canvas.bind("<B1-Motion>")
         assert not editor.canvas.bind("<Delete>")

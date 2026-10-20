@@ -8,6 +8,7 @@ from tkinter import font, scrolledtext, ttk
 
 from .config import validate_config
 from .ui import BG, INK, MUTED
+from .pair_preview_ui import PairPreview
 
 COLORS = {"key": "#2563eb", "field": "#087e6b", "items": "#8052ba", "guard": "#ad6c13", "rebuild_items": "#8052ba"}
 LABELS = {"key": "같은 건 찾기", "field": "수정값 반영", "items": "반복 목록", "guard": "기존값·동일성 검사", "rebuild_items": "목록 전체 재구성"}
@@ -97,10 +98,10 @@ def profile_connections(profile):
 
 class RuleReview:
     """Paired rows show only configured connections, with full JSON available on click."""
-    def __init__(self, parent, profile, on_continue, on_close, on_revision):
+    def __init__(self, parent, profile, on_continue, on_close, *, source_hint="", result_hints=()):
         self.profile = copy.deepcopy(validate_config(profile))
         self.rows = profile_connections(self.profile)
-        self.on_continue, self.on_close, self.on_revision = on_continue, on_close, on_revision
+        self.on_continue, self.on_close = on_continue, on_close
         self.closed = False
         self.selected = None
         self.window = ttk.Frame(parent)
@@ -108,7 +109,7 @@ class RuleReview:
         self.query = tk.StringVar()
         self.filter_kind = tk.StringVar(value="전체 연결")
         self.count = tk.StringVar()
-        self.status = tk.StringVar(value="AI 규칙의 연결 구조입니다. 아직 실제 데이터의 매칭·변경을 검증하지 않았습니다.")
+        self.status = tk.StringVar(value="규칙과 선택한 한 쌍을 확인하는 화면입니다. 실제 저장 전 전체 입력을 검증하세요.")
         footer = ttk.Frame(self.window, padding=(0, 10, 0, 0)); footer.pack(side="bottom", fill="x")
         note = ttk.Label(footer, textvariable=self.status, wraplength=780, foreground=MUTED)
         note.pack(fill="x", pady=(0, 8))
@@ -118,8 +119,8 @@ class RuleReview:
         self.apply_button = ttk.Button(actions, text="연결 확인 완료 · 입력 선택 →", style="Primary.TButton", command=self._apply)
         self.apply_button.pack(side="right")
         self.pages = ttk.Notebook(self.window); self.pages.pack(fill="both", expand=True)
-        visual, conditions, raw, revision = [ttk.Frame(self.pages, padding=10) for _ in range(4)]
-        for page, name in ((visual, "필드 연결"), (conditions, "조건·검증"), (raw, "규칙 JSON"), (revision, "AI에 수정 요청")):
+        visual, preview, raw = [ttk.Frame(self.pages, padding=10) for _ in range(3)]
+        for page, name in ((visual, "필드 연결"), (preview, "필드 연결 프리뷰"), (raw, "규칙 JSON")):
             self.pages.add(page, text=name)
         ttk.Label(visual, text="보완 전 원본의 위치  ←  규칙에서 가져올 값", style="Heading.TLabel").pack(anchor="w", pady=(0, 6))
         ttk.Label(visual, text="읽기 전용 · 연결된 항목만 표시합니다. 행을 누르면 해당 규칙의 전체 설정이 아래에 보입니다.", foreground=MUTED, wraplength=750).pack(anchor="w", pady=(0, 10))
@@ -147,19 +148,9 @@ class RuleReview:
         self.canvas.bind("<MouseWheel>", lambda e: self.canvas.yview_scroll(-1 if e.delta > 0 else 1, "units"))
         self.query.trace_add("write", self._filter)
         self.filter_kind.trace_add("write", self._filter)
-        self.conditions_box = self._box(conditions)
-        lines = ["데이터 범위와 레코드 위치", json_text({"source": self.profile["source"], "result": self.profile["result"]}),
-                 "\n레코드 적용 조건", json_text(self.profile.get("include_when", [])),
-                 "\n레코드 사전 검사", json_text(self.profile.get("checks", [])),
-                 "\n반영 후 검증", json_text(self.profile.get("assertions", [])),
-                 "\n필드·목록별 전체 설정 (조건·기존값 대조·자료형 포함)", json_text(self.profile["rules"])]
-        self._text(self.conditions_box, "\n".join(lines))
+        self.preview = PairPreview(preview, self.profile, source_hint, result_hints)
+        self.preview.pack(fill="both", expand=True)
         self.raw_box = self._box(raw); self._text(self.raw_box, json_text(self.profile))
-        ttk.Label(revision, text="바꾸고 싶은 내용을 적어 AI에 다시 요청하세요.", style="Heading.TLabel").pack(anchor="w")
-        ttk.Label(revision, text="아래 버튼은 작성 가이드 + 현재 규칙 + 요청 내용을 복사합니다.\nAI 대화에 붙여 넣고 원본 라벨과 플랫폼 결과도 함께 제공하세요.", wraplength=740).pack(anchor="w", pady=12)
-        self.revision_text = scrolledtext.ScrolledText(revision, wrap="word", height=6, font=("맑은 고딕", 11), relief="flat")
-        self.revision_text.pack(fill="both", expand=True)
-        ttk.Button(revision, text="AI 수정 요청 전체 복사", command=self._copy_revision, style="Primary.TButton").pack(anchor="e", pady=(12, 0))
         self._draw()
 
     @staticmethod
@@ -230,14 +221,6 @@ class RuleReview:
                 self._draw()
                 break
 
-    def _copy_revision(self):
-        request = self.revision_text.get("1.0", "end").strip()
-        if not request:
-            self.status.set("AI에게 요청할 수정 내용을 먼저 적어 주세요.")
-            return
-        self.on_revision(copy.deepcopy(self.profile), request)
-        self.status.set("가이드·현재 규칙·수정 요청을 복사했습니다. AI에 원본과 결과 데이터를 함께 제공하세요.")
-
     def _apply(self):
         self._close(notify=False)
         self.on_continue()
@@ -245,5 +228,6 @@ class RuleReview:
     def _close(self, notify=True):
         if self.closed: return
         self.closed = True
+        self.preview.close()
         self.window.destroy()
         if notify: self.on_close()
