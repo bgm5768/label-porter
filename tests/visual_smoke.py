@@ -20,7 +20,7 @@ def main():
     root = tk.Tk()
     errors = []
     root.report_callback_exception = lambda *args: errors.append(args)
-    output = Path('outputs/ui-v212')
+    output = Path('outputs/ui-v213')
     output.mkdir(parents=True, exist_ok=True)
     def wait(predicate):
         end = time.monotonic()+20
@@ -51,6 +51,8 @@ def main():
             capture('00-guide')
             app._show_tools(1); root.update()
             capture('00-help')
+            app._show_tools(2); root.update()
+            capture('00-capabilities')
             app.back_button.invoke()
             assert app.current_step == 0
             profile = {'schema_version':1,'name':'문장 보완 프로젝트 · AI 규칙',

@@ -5,7 +5,7 @@ a = Analysis(
     ['launcher.py'],
     pathex=[],
     binaries=[],
-    datas=[('profiles', 'profiles'), ('사용설명.md', '.'), ('AI_규칙작성_가이드.md', '.')],
+    datas=[('profiles', 'profiles'), ('사용설명.md', '.'), ('AI_규칙작성_가이드.md', '.'), ('후처리_지원범위.md', '.')],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},

@@ -21,13 +21,16 @@ def self_test(output):
         root.update_idletasks()
         config = next(profile for path, profile in app.profiles.values() if path.stem == "generic")
         assert len(app.profiles) == 4
-        assert len(app.tabs.tabs()) == 2
+        assert len(app.tabs.tabs()) == 3
         assert len(app.steps.tabs()) == 4
         assert str(app.steps.tab(1, "state")) == "disabled"
         assert "AI 규칙 작성 가이드" in [app.tabs.tab(tab, "text") for tab in app.tabs.tabs()]
         assert "schema_version" in app.ai_guide_text
         assert app.ai_guide_box.get("1.0", "end-1c") == app.ai_guide_text
         assert app.help_box.get("1.0", "end-1c") == app.help_text
+        assert app.capabilities_box.get("1.0", "end-1c") == app.capabilities_text
+        assert "rebuild_items" in app.capabilities_text
+        assert app.tabs.tab(2, "text") == "후처리 지원 범위"
         assert all(text not in app.help_text for text in ("one_before", "one_after", "008", "013"))
         assert not hasattr(app, "assets_directory")
         app._set_config(config)

@@ -50,6 +50,7 @@ class App(Workflow):
         self.settings_path = Path(os.environ.get("APPDATA", str(Path.home()))) / "LabelPorter" / "settings.json"
         self.ai_guide_text = (resource_directory()/AI_GUIDE_FILENAME).read_text(encoding="utf-8")
         self.help_text = (resource_directory()/"사용설명.md").read_text(encoding="utf-8")
+        self.capabilities_text = (resource_directory()/"후처리_지원범위.md").read_text(encoding="utf-8")
         self._config_text = ""
         self._build()
         self._load_settings()
@@ -183,13 +184,16 @@ class App(Workflow):
         self.mapping_host = ttk.Frame(self.content)
         self.help_host = ttk.Frame(self.content)
         self.tabs = ttk.Notebook(self.help_host); self.tabs.pack(fill="both", expand=True)
-        ai, help_page = [ttk.Frame(self.tabs, padding=12) for _ in range(2)]
+        ai, help_page, capabilities = [ttk.Frame(self.tabs, padding=12) for _ in range(3)]
         self.tabs.add(ai, text="AI 규칙 작성 가이드"); self.tabs.add(help_page, text="사용 방법")
+        self.tabs.add(capabilities, text="후처리 지원 범위")
         row = ttk.Frame(ai); row.pack(fill="x", pady=(0, 12))
         ttk.Button(row, text="가이드 복사", command=self._copy_ai_guide).pack(side="left")
         ttk.Button(row, text="MD 파일 저장", command=self._save_ai_guide).pack(side="left", padx=8)
         self.ai_guide_box = self._document_view(ai, self.ai_guide_text)
+        ttk.Button(help_page, text="처리 가능한 업무와 제한 보기 →", command=lambda: self.tabs.select(2)).pack(anchor="w", pady=(0, 10))
         self.help_box = self._document_view(help_page, self.help_text)
+        self.capabilities_box = self._document_view(capabilities, self.capabilities_text)
 
     @staticmethod
     def _table(parent, columns, height):
