@@ -54,16 +54,17 @@ def _copy_with_hash(source, destination, checkpoint):
 
 def export_partitions(run_dir: Path, source_base: Path, selected_files, record_positions,
                       changed_positions, file_manifest, spec, summary, manifest,
-                      preview, checkpoint, progress):
+                      preview, checkpoint, progress, examine_positions=None, examine_files=None, split_output=True):
     """A record goes to exactly one group; unparseable files remain unclassified."""
+    examine_positions, examine_files = examine_positions or {}, examine_files or set()
     summary["partition_status"] = "in_progress"
-    counts = summary["partition_records"] = {"changed": 0, "unchanged": 0}
-    file_counts = summary["partition_files"] = {"changed": 0, "unchanged": 0, "unclassified": 0}
+    counts = summary["partition_records"] = {"changed": 0, "unchanged": 0, "examine": 0}
+    file_counts = summary["partition_files"] = {"changed": 0, "unchanged": 0, "examine": 0, "unclassified": 0}
     outputs = manifest["partition_outputs"] = []
     if not preview:
-        for group in ("changed", "unchanged"):
-            (run_dir / group).mkdir()
-    with (run_dir / "reports" / "partition_index.jsonl").open("w", encoding="utf-8") as index_file:
+        for group in (("changed", "unchanged", "examine") if split_output else ("examine",)):
+            (run_dir / group).mkdir(exist_ok=True)
+    with (run_dir / "reports" / ("partition_index.jsonl" if split_output else "examine_index.jsonl")).open("w", encoding="utf-8") as index_file:
         for number, relative in enumerate(sorted(selected_files), 1):
             checkpoint()
             positions = record_positions.get(relative)
@@ -75,15 +76,20 @@ def export_partitions(run_dir: Path, source_base: Path, selected_files, record_p
                 positions_set = set(positions)
                 if not changed.issubset(positions_set):
                     raise DataError(f"분리 대상 레코드 위치를 확인할 수 없습니다: {relative}")
-                groups = {"changed": [item for item in positions if item in changed],
-                          "unchanged": [item for item in positions if item not in changed]}
+                examined = set(positions) if relative in examine_files else examine_positions.get(relative, set())
+                if not examined.issubset(positions_set):
+                    raise DataError(f"검토 레코드 위치를 확인할 수 없습니다: {relative}")
+                groups = {"examine": [item for item in positions if item in examined]}
+                if split_output:
+                    groups.update(changed=[item for item in positions if item in changed and item not in examined],
+                                  unchanged=[item for item in positions if item not in changed and item not in examined])
             for group, members in groups.items():
-                if members == [] and not (group == "unchanged" and positions == []):
+                if members == [] and not (group == "examine" and positions == [] and relative in examine_files):
                     continue
                 if members is not None:
                     counts[group] += len(members)
                 file_counts[group] += 1
-                output_relative = Path(group) / "labels" / relative
+                output_relative = (Path("examine") / "unparsed" if group == "unclassified" else Path(group) / "labels") / relative
                 destination = run_dir / output_relative
                 whole_file = positions is None or len(members) == len(positions)
                 if whole_file:
@@ -115,7 +121,8 @@ def export_partitions(run_dir: Path, source_base: Path, selected_files, record_p
                         "source_record_path": f"doc:{old[0]}{old[1]}", "partition_file": output_relative.as_posix(),
                         "partition_record_path": f"doc:{new[0]}{new[1]}", "preview": preview}, ensure_ascii=False) + "\n")
             if number % 100 == 0 or number == len(selected_files):
-                progress("partition", f"변경/미변경 분리 {number:,}/{len(selected_files):,}", number, len(selected_files))
-    if sum(counts.values()) != summary["source_records"]:
+                progress("partition", f"변경/미변경/검토 분리 {number:,}/{len(selected_files):,}", number, len(selected_files))
+    if split_output and sum(counts.values()) != summary["source_records"]:
         raise DataError("분리 저장한 레코드 수와 원본 레코드 수가 일치하지 않습니다.")
     summary["partition_status"] = "planned" if preview else "completed"
+    summary["examine_records"] = counts["examine"]

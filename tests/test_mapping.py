@@ -55,7 +55,7 @@ class MappingTests(unittest.TestCase):
         actual = json.loads((result.directory / "data" / "sample.json").read_text(encoding="utf-8"))
         self.assertEqual(actual, [{"id": "a", "label": "new", "keep": 7}, {"id": "b", "label": "same"}])
         self.assertEqual(self.source.path.read_bytes(), before)
-        self.assertEqual(result.summary["partition_records"], {"changed": 1, "unchanged": 1})
+        self.assertEqual(result.summary["partition_records"], {"changed": 1, "unchanged": 0, "examine": 1})
 
     def test_guard_detects_wrong_original_and_repeat_run_is_unchanged(self):
         scope = self.simple()

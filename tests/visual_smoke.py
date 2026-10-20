@@ -20,7 +20,7 @@ def main():
     root = tk.Tk()
     errors = []
     root.report_callback_exception = lambda *args: errors.append(args)
-    output = Path('outputs/ui-v27')
+    output = Path('outputs/ui-v28')
     output.mkdir(parents=True, exist_ok=True)
     def wait(predicate):
         end = time.monotonic()+20
@@ -76,12 +76,12 @@ def main():
             app.primary_button.invoke(); root.update(); assert app.current_step==2
             app.primary_button.invoke(); wait(lambda:not app.running)
             assert app.preview_fingerprint
-            assert [v.get() for v in app.metric_values.values()]==['1','1','1','1']
+            assert [v.get() for v in app.metric_values.values()]==['4','4','2','1','1','1','2','2']
             capture('05-validation')
             app.primary_button.invoke(); wait(lambda:not app.running)
             assert app._saved()
             assert before=={p.name:p.read_bytes() for p in originals.iterdir()}
-            assert app.last_summary['partition_records']=={'changed':1,'unchanged':3}
+            assert app.last_summary['partition_records']=={'changed':1,'unchanged':1,'examine':2}
             capture('06-saved')
             root.geometry('1040x680+20+20'); root.update()
             capture('07-small-window')

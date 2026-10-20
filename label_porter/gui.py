@@ -151,15 +151,15 @@ class App(Workflow):
         self.result_list.configure(yscrollcommand=scroll.set); self.result_list.pack(fill="x", expand=True)
         group = card(inputs, "3. 새 결과를 저장할 폴더", "반영 결과는 날짜 / 001, 002… 폴더에 저장합니다. 원본 폴더 밖을 선택하세요.")
         self._path_row(group, self.output, self._choose_output)
-        ttk.Checkbutton(inputs, text="변경 / 미변경 라벨도 따로 저장 · 전체 복사본은 항상 유지", variable=self.split_output).pack(anchor="w", pady=(0, 12))
+        ttk.Checkbutton(inputs, text="정상 데이터도 변경 / 미변경으로 분리 · 검토 대상은 항상 examine에 저장", variable=self.split_output).pack(anchor="w", pady=(0, 12))
         group = card(review, "이번 작업", "전체 데이터 검증을 마쳐야 복사본을 저장할 수 있습니다.")
         ttk.Label(group, textvariable=self.run_summary, style="CardMuted.TLabel", wraplength=760).pack(fill="x")
         self.metric_values = {}
         metrics = ttk.Frame(review); metrics.pack(fill="x", pady=(0, 14))
-        for i, (key, title) in enumerate((("changed", "변경"), ("same", "변경 없음"), ("missing", "결과 없음"), ("review", "원본 검토 필요"))):
-            metrics.columnconfigure(i, weight=1, uniform="metric")
+        for i, (key, title) in enumerate((("source", "원본 레코드"), ("result", "보완 레코드"), ("completed", "처리 완료 / 통과"), ("fields", "변경 필드"), ("changed", "변경"), ("same", "변경 없음"), ("missing", "짝이 없는 데이터"), ("review", "검토 / 오류"))):
+            metrics.columnconfigure(i % 4, weight=1, uniform="metric")
             box = ttk.Frame(metrics, style="Card.TFrame", padding=12)
-            box.grid(row=0, column=i, sticky="nsew", padx=(0, 7 if i < 3 else 0))
+            box.grid(row=i // 4, column=i % 4, sticky="nsew", padx=(0, 7), pady=(0, 7))
             ttk.Label(box, text=title, style="CardMuted.TLabel").pack(anchor="w")
             var = self.metric_values[key] = tk.StringVar(value="—")
             ttk.Label(box, textvariable=var, style="CardTitle.TLabel", font=("맑은 고딕", 21, "bold")).pack(anchor="w", pady=(8, 0))
@@ -169,7 +169,7 @@ class App(Workflow):
         self.status_table = self._table(review, (("구분", 100), ("처리 결과", 420), ("건수", 90)), 5)
         links = ttk.Frame(review); links.pack(fill="x", pady=(0, 12))
         self.preview_button = ttk.Button(links, text="전체 검증 다시 하기", command=lambda: self._start(True)); self.preview_button.pack(side="left")
-        self.report_button = ttk.Button(self.footer_actions, text="상세 보고서", command=self._open_report, state="disabled")
+        self.report_button = ttk.Button(self.footer_actions, text="처리 결과서 열기", command=self._open_report, state="disabled")
         self.folder_button = ttk.Button(self.footer_actions, text="결과 폴더", command=self._open_folder, state="disabled")
         # Execution code can disable this action, while the footer provides the current label.
         self.run_button = self.primary_button
@@ -341,7 +341,7 @@ class App(Workflow):
             pattern = self._get_config()["source"].get("glob", "**/*.json")
             if not any(p.is_file() for p in Path(self.source.get()).glob(pattern)):
                 raise ValueError(f"원본 폴더에서 대상 패턴 ‘{pattern}’에 맞는 파일을 찾지 못했습니다.")
-            self.run_summary.set(f"규칙  {self._get_config()['name']}\n원본  {self.source.get()}\n결과  {len(self.result_paths):,}개 파일\n저장  {self.output.get()}\n분리  {'변경 / 미변경 라벨 포함' if self.split_output.get() else '전체 복사본만'}")
+            self.run_summary.set(f"규칙  {self._get_config()['name']}\n원본  {self.source.get()}\n결과  {len(self.result_paths):,}개 파일\n저장  {self.output.get()}\n분리  {'변경 / 미변경 / examine' if self.split_output.get() else '전체 복사본 + examine'}")
             self.steps.tab(2, state="normal"); self._show_step(2)
             self.status.set("전체 데이터 검증 후 집계와 보고서를 확인하세요."); self._save_settings()
         except (ValueError, OSError) as exc: self.status.set(f"입력 확인: {exc}")
@@ -421,15 +421,19 @@ class App(Workflow):
     def _show_summary(self, summary):
         counts = summary.get("source_status_counts", {})
         values = {"changed": counts.get("planned_update", 0)+counts.get("updated", 0), "same": counts.get("unchanged", 0),
-                  "missing": counts.get("no_result", 0), "review": sum(counts.get(k, 0) for k in ISSUES)}
+                  "missing": summary.get("unmatched_records", counts.get("no_result", 0) + summary.get("result_issue_counts", {}).get("orphan_result", 0)),
+                  "review": summary.get("issue_rows", sum(counts.get(k, 0) for k in ISSUES)),
+                  "source": summary.get("source_records", 0), "result": summary.get("result_records", 0),
+                  "completed": summary.get("completed_records", counts.get("updated",0)+counts.get("planned_update",0)+counts.get("unchanged",0)),
+                  "fields": summary.get("changed_fields", 0)}
         for key, value in values.items(): self.metric_values[key].set(f"{value:,}")
         self.status_table.delete(*self.status_table.get_children())
         for scope, key in (("원본 레코드", "source_status_counts"), ("결과 항목", "result_issue_counts"), ("원본 파일", "source_file_issue_counts")):
             for status, count in summary.get(key, {}).items(): self.status_table.insert("", "end", values=(scope, STATUS.get(status, status), f"{count:,}"))
         text = f"원본 {summary.get('source_records', 0):,}건 · 결과 {summary.get('result_records', 0):,}건"
         p = summary.get("partition_records", {})
-        if p: text += f"\n분리 {'예정' if summary['preview'] else '결과'}: 변경 {p.get('changed',0):,}건 / 미변경 {p.get('unchanged',0):,}건"
-        text += "\n미변경에는 결과 없음·조건 제외·검토 보류도 포함됩니다. 미변경은 검수 완료를 뜻하지 않습니다."
+        if p: text += f"\n분리 {'예정' if summary['preview'] else '결과'}: 변경 {p.get('changed',0):,}건 / 미변경 {p.get('unchanged',0):,}건 / examine {p.get('examine',0):,}건"
+        text += "\n검토·오류·짝이 없는 항목은 examine에서 확인하세요. 처리 결과서에서 모든 분류를 검색할 수 있습니다."
         if summary.get("advisory_rows"):
             text += f"\n어절 등 반영 {summary['advisory_rows']:,}건에서 연결 불확실 태그 {summary.get('held_references',0):,}개를 별도 보관했습니다."
         if summary["status"] in ("failed", "cancelled"): text += "\n작업이 완료되지 않았습니다. 부분 결과를 완성본으로 사용하지 마세요."

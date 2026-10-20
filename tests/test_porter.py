@@ -229,7 +229,7 @@ class PorterTests(unittest.TestCase):
         result = self.execute({"id": "<script>alert(1)</script>", "label": "old"}, {"source_id": "<script>alert(1)</script>", "corrected_label": ""})
         html = (result.directory / "reports" / "report.html").read_text(encoding="utf-8")
         self.assertNotIn("<script>", html)
-        self.assertIn("&lt;script&gt;", html)
+        self.assertIn("\\u003cscript\\u003e", html)
         self.assertEqual(csv_safe("=1+1"), "'=1+1")
 
     def test_config_rejects_unknown_ops_and_typos(self):
@@ -262,8 +262,8 @@ class PorterTests(unittest.TestCase):
         incoming = [{"source_id": str(i), "corrected_label": "new"} for i in range(10000)]
         result = self.execute(original, incoming)
         changed = json.loads((result.directory / "changed" / "labels" / "data.json").read_text(encoding="utf-8"))
-        unchanged = json.loads((result.directory / "unchanged" / "labels" / "data.json").read_text(encoding="utf-8"))
-        self.assertEqual(result.summary["partition_records"], {"changed": 10000, "unchanged": 10000})
+        unchanged = json.loads((result.directory / "examine" / "labels" / "data.json").read_text(encoding="utf-8"))
+        self.assertEqual(result.summary["partition_records"], {"changed": 10000, "unchanged": 0, "examine": 10000})
         self.assertEqual([row["id"] for row in changed], [str(i) for i in range(10000)])
         self.assertEqual(unchanged, original[10000:])
         self.assertTrue(all(row["label"] == "new" and row["metadata"]["preserve"] == int(row["id"]) for row in changed))
@@ -282,22 +282,23 @@ class PorterTests(unittest.TestCase):
         self.write(self.result, [{"source_id": "a", "corrected_label": "new"}, {"source_id": "b", "corrected_label": "same"}, {"source_id": "d", "corrected_label": ""}])
         (self.source / "media.wav").write_bytes(b"unchanged media")
         result = run(self.source, [self.result], self.output, self.config)
-        self.assertEqual(result.summary["partition_records"], {"changed": 1, "unchanged": 3})
+        self.assertEqual(result.summary["partition_records"], {"changed": 1, "unchanged": 1, "examine": 2})
         self.assertEqual({p.relative_to(result.directory / "changed").as_posix() for p in (result.directory / "changed").rglob("*") if p.is_file()}, {"labels/a/one.json"})
         for name in ("b/one.json", "c/missing.json", "d/review.json"):
-            self.assertEqual((result.directory / "unchanged" / "labels" / name).read_bytes(), (self.source / name).read_bytes())
+            group = "unchanged" if name == "b/one.json" else "examine"
+            self.assertEqual((result.directory / group / "labels" / name).read_bytes(), (self.source / name).read_bytes())
         self.assertFalse((result.directory / "changed" / "media.wav").exists())
         self.assertTrue((result.directory / "data" / "media.wav").exists())
         states = {row["key"]: (row["status"], row["output_group"]) for row in self.report_rows(result)}
-        self.assertEqual(states["c"], ("no_result", "unchanged"))
-        self.assertEqual(states["d"], ("review_required", "unchanged"))
+        self.assertEqual(states["c"], ("no_result", "examine"))
+        self.assertEqual(states["d"], ("review_required", "examine"))
 
     def test_split_nested_wrapper_preserves_metadata_and_record_order(self):
         self.config["source"]["records_path"] = "/payload/rows"
         original = {"meta": {"schema": "keep"}, "payload": {"other": [1, 2], "rows": [{"id": "a", "label": "old"}, {"id": "b", "label": "same"}, {"id": "c", "label": "old"}]}}
         result = self.execute(original, [{"source_id": "c", "corrected_label": "new_c"}, {"source_id": "a", "corrected_label": "new_a"}])
         changed = json.loads((result.directory / "changed" / "labels" / "data.json").read_text())
-        unchanged = json.loads((result.directory / "unchanged" / "labels" / "data.json").read_text())
+        unchanged = json.loads((result.directory / "examine" / "labels" / "data.json").read_text())
         self.assertEqual(changed["meta"], original["meta"])
         self.assertEqual(changed["payload"]["other"], [1, 2])
         self.assertEqual([item["id"] for item in changed["payload"]["rows"]], ["a", "c"])
@@ -310,7 +311,7 @@ class PorterTests(unittest.TestCase):
         self.write(self.result, {"source_id": "b", "corrected_label": "new"})
         result = run(self.source, [self.result], self.output, self.config)
         changed = read_document(result.directory / "changed" / "labels" / "rows.jsonl")
-        unchanged = read_document(result.directory / "unchanged" / "labels" / "rows.jsonl")
+        unchanged = read_document(result.directory / "examine" / "labels" / "rows.jsonl")
         self.assertEqual(changed.docs, [{"id": "b", "label": "new"}])
         self.assertEqual([item["id"] for item in unchanged.docs], ["a", "c"])
         index = [json.loads(line) for line in (result.directory / "reports" / "partition_index.jsonl").read_text().splitlines()]
@@ -322,28 +323,29 @@ class PorterTests(unittest.TestCase):
         self.write(self.source / "no_key.json", {"label": "keep"})
         self.write(self.result, [])
         result = run(self.source, [self.result], self.output, self.config)
-        self.assertEqual(result.summary["partition_records"], {"changed": 0, "unchanged": 1})
-        self.assertEqual(result.summary["partition_files"], {"changed": 0, "unchanged": 1, "unclassified": 1})
-        self.assertEqual((result.directory / "unclassified" / "labels" / "broken.json").read_bytes(), b'{"broken":')
-        self.assertTrue((result.directory / "unchanged" / "labels" / "no_key.json").exists())
+        self.assertEqual(result.summary["partition_records"], {"changed": 0, "unchanged": 0, "examine": 1})
+        self.assertEqual(result.summary["partition_files"], {"changed": 0, "unchanged": 0, "examine": 1, "unclassified": 1})
+        self.assertEqual((result.directory / "examine" / "unparsed" / "broken.json").read_bytes(), b'{"broken":')
+        self.assertTrue((result.directory / "examine" / "labels" / "no_key.json").exists())
 
     def test_split_preview_counts_but_creates_no_subset_files(self):
         result = self.execute([{"id": "a", "label": "old"}, {"id": "b", "label": "keep"}], {"source_id": "a", "corrected_label": "new"}, preview=True)
-        self.assertEqual(result.summary["partition_records"], {"changed": 1, "unchanged": 1})
+        self.assertEqual(result.summary["partition_records"], {"changed": 1, "unchanged": 0, "examine": 1})
         self.assertEqual(result.summary["partition_status"], "planned")
-        for name in ("data", "changed", "unchanged"):
+        for name in ("data", "changed", "unchanged", "examine"):
             self.assertFalse((result.directory / name).exists())
 
     def test_split_can_be_disabled(self):
         result = self.execute({"id": "a", "label": "old"}, {"source_id": "a", "corrected_label": "new"}, split_output=False)
-        self.assertEqual(result.summary["partition_status"], "disabled")
+        self.assertEqual(result.summary["partition_status"], "completed")
+        self.assertTrue((result.directory / "examine" / "records.jsonl").exists())
         self.assertFalse((result.directory / "changed").exists())
         self.assertFalse((result.directory / "reports" / "partition_index.jsonl").exists())
 
     def test_net_no_change_goes_to_unchanged_even_if_rules_temporarily_modify(self):
         self.config["rules"].append({"kind": "field", "from": {"literal": "old"}, "to": "/label"})
         result = self.execute({"id": "a", "label": "old"}, {"source_id": "a", "corrected_label": "temporary"})
-        self.assertEqual(result.summary["partition_records"], {"changed": 0, "unchanged": 1})
+        self.assertEqual(result.summary["partition_records"], {"changed": 0, "unchanged": 1, "examine": 0})
         self.assertEqual(result.summary["changed_fields"], 0)
         self.assertEqual((result.directory / "unchanged" / "labels" / "data.json").read_bytes(), (self.source / "data.json").read_bytes())
 

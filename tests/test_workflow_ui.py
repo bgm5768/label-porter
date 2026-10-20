@@ -166,7 +166,7 @@ class WorkflowUiTests(unittest.TestCase):
                               'source_status_counts':{'planned_update':1,'unchanged':1,'no_result':1,'review_required':1},
                               'result_issue_counts':{'orphan_result':2},'source_file_issue_counts':{'invalid_source':1},
                               'partition_records':{'changed':1,'unchanged':3}})
-            self.assertEqual([v.get() for v in app.metric_values.values()], ['1','1','1','1'])
+            self.assertEqual([v.get() for v in app.metric_values.values()], ['4','3','2','0','1','1','3','1'])
             self.assertIn('미변경 3건', app.review_note.get())
 
     def test_navigation_visible_at_small_window_and_embedded_canvas_fits(self):

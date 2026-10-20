@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import csv
 import hashlib
 import json
 import re
@@ -29,8 +30,9 @@ def verify_partitions(directory, manifest, summary, config):
     assert summary["partition_status"] == "completed", "분리 저장이 완료되지 않았습니다."
     entries = manifest["partition_outputs"]
     paths = {entry["path"] for entry in entries}
-    actual_paths = {path.relative_to(directory).as_posix() for group in ("changed", "unchanged", "unclassified")
+    actual_paths = {path.relative_to(directory).as_posix() for group in ("changed", "unchanged", "unclassified", "examine")
                     for path in (directory / group / "labels").rglob("*") if path.is_file()}
+    actual_paths.update(path.relative_to(directory).as_posix() for path in (directory / "examine" / "unparsed").rglob("*") if path.is_file())
     assert paths == actual_paths, "분리 라벨 파일 누락/추가"
     rows_by_source = {}
     with (directory / "reports" / "partition_index.jsonl").open(encoding="utf-8") as handle:
@@ -38,7 +40,9 @@ def verify_partitions(directory, manifest, summary, config):
             row = json.loads(line)
             rows_by_source.setdefault(row["source_file"], []).append(row)
     spec = config["source"]
-    counts = {"changed": 0, "unchanged": 0}
+    counts = {key: 0 for key in summary["partition_records"]}
+    with (directory / "reports" / "records.csv").open(encoding="utf-8-sig", newline="") as handle:
+        examined = {(r["source_file"], r["record_path"]) for r in csv.DictReader(handle) if r["scope"] == "source" and r["output_group"] == "examine"}
     for entry in entries:
         path = directory / entry["path"]
         assert digest(path) == entry["sha256"], f"분리 라벨 해시 불일치: {path}"
@@ -62,7 +66,7 @@ def verify_partitions(directory, manifest, summary, config):
             if row["partition_file"] not in subsets:
                 subsets[row["partition_file"]] = read_document(directory / row["partition_file"], spec.get("encoding", "utf-8-sig"), "json")
             before, after = address(original, old_address), address(combined, old_address)
-            expected_group = "unchanged" if equivalent(before, after) else "changed"
+            expected_group = "examine" if (source_file, old_address) in examined else "unchanged" if equivalent(before, after) else "changed"
             assert row["group"] == expected_group, "실제 변경 여부와 분리 그룹이 다릅니다."
             assert equivalent(address(subsets[row["partition_file"]], row["partition_record_path"]), after), "분리본 내용이 전체 결과와 다릅니다."
             counts[row["group"]] += 1

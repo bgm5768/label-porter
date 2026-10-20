@@ -45,7 +45,7 @@ class SampleCollectionTests(unittest.TestCase):
         self.assertEqual(report["counts"], {"updated": 2, "no_result": 1})
         self.assertEqual(report["all_source_key_counts"], {"matched": 2, "no_result": 1})
         actual = run(self.originals, [incoming], self.base / "output", config)
-        self.assertEqual(actual.summary["partition_records"], {"changed": 2, "unchanged": 1})
+        self.assertEqual(actual.summary["partition_records"], {"changed": 2, "unchanged": 0, "examine": 1})
         self.assertEqual(json.loads((actual.directory / "data/sub/b.json").read_text())["label"], "new b")
         self.assertEqual(json.loads((self.originals / "sub/b.json").read_text())["label"], "old b")
 

@@ -36,12 +36,15 @@ PAGER = """
 SCRIPT = r"""
 (() => {
   const all = JSON.parse(document.getElementById('review-data').textContent);
+  const dashboard = !!document.getElementById('report-categories');
   const byId = id => document.getElementById('review-' + id);
   const search = byId('search'), size = byId('size'), input = byId('page');
-  const indexed = all.map(row => ({row, text: [row['상태'], row['원본'], row['키'], row['사유']].join(' ').toLowerCase()}));
+  const indexed = all.map(row => ({row, text: [row['상태'], row['원본'], row['보완'], row['키'], row['위치'], row['사유']].join(' ').toLowerCase()}));
+  const category = dashboard ? document.getElementById('report-category') : null;
+  const status = dashboard ? document.getElementById('report-status') : null;
   let filtered = all, page = 1, timer;
   function state() {
-    return new URLSearchParams({q: search.value, size: size.value, page: String(page)});
+    return new URLSearchParams({q: search.value, size: size.value, page: String(page), ...(dashboard ? {group: category.value, status: status.value} : {})});
   }
   function render() {
     const amount = Number(size.value), pages = Math.max(1, Math.ceil(filtered.length / amount));
@@ -51,20 +54,21 @@ SCRIPT = r"""
     const hash = '#' + state().toString();
     for (const row of filtered.slice(start, end)) {
       const tr = document.createElement('tr');
-      for (const key of ['상태', '원본', '키', '사유']) {
+      for (const key of (dashboard ? ['상태', '원본', '보완', '키', '위치', '사유'] : ['상태', '원본', '키', '사유'])) {
         const td = document.createElement('td');
         td.textContent = row[key] == null ? '' : String(row[key]);
+        if (dashboard && key === '보완') { td.title = td.textContent; td.textContent = td.textContent.split(/[\\/]/).pop(); }
         if (key === '사유') td.style.whiteSpace = 'pre-wrap';
         tr.append(td);
       }
       const td = document.createElement('td'), link = document.createElement('a');
       link.href = row.link + hash;
-      link.textContent = '비교 보기 · ' + row.issues + '개 사유';
+      link.textContent = dashboard ? '상세 비교' + (row.issues ? ' · ' + row.issues + '개 사유' : '') : '비교 보기 · ' + row.issues + '개 사유';
       td.append(link); tr.append(td); fragment.append(tr);
     }
     if (!filtered.length) {
       const tr = document.createElement('tr'), td = document.createElement('td');
-      td.colSpan = 5; td.textContent = all.length ? '검색 결과가 없습니다.' : '라벨 검토 항목이 없습니다.';
+      td.colSpan = dashboard ? 7 : 5; td.textContent = all.length ? '검색 결과가 없습니다.' : dashboard ? '표시할 처리 기록이 없습니다.' : '라벨 검토 항목이 없습니다.';
       tr.append(td); fragment.append(tr);
     }
     byId('list').replaceChildren(fragment);
@@ -80,13 +84,30 @@ SCRIPT = r"""
   }
   function filter() {
     const query = search.value.trim().toLowerCase();
-    filtered = query ? indexed.filter(item => item.text.includes(query)).map(item => item.row) : all;
+    filtered = indexed.filter(item => (!dashboard || item.row.groups.includes(category.value)) &&
+      (!dashboard || !status.value || item.row.status === status.value) && (!query || item.text.includes(query))).map(item => item.row);
+    if (dashboard) {
+      document.getElementById('list-title').textContent = category.options[category.selectedIndex].text;
+      document.querySelectorAll('[data-group]').forEach(node => node.setAttribute('aria-current', node.dataset.group === category.value ? 'true' : 'false'));
+    }
   }
   function restore() {
     const params = new URLSearchParams(location.hash.slice(1));
     search.value = params.get('q') || '';
     size.value = ['25','50','100'].includes(params.get('size')) ? params.get('size') : '25';
+    if (dashboard) {
+      category.value = Array.from(category.options).some(o => o.value === params.get('group')) ? params.get('group') : 'output';
+      status.value = Array.from(status.options).some(o => o.value === params.get('status')) ? params.get('status') : '';
+    }
     page = Number(params.get('page')) || 1; filter(); render();
+  }
+  if (dashboard) {
+    category.addEventListener('change', () => { page = 1; status.value = ''; filter(); render(); });
+    status.addEventListener('change', () => { page = 1; filter(); render(); });
+    document.querySelectorAll('[data-group]').forEach(node => node.addEventListener('click', event => {
+      event.preventDefault(); category.value = node.dataset.group; page = 1; search.value = ''; status.value = ''; filter(); render();
+      document.getElementById('records').scrollIntoView({behavior: 'smooth'});
+    }));
   }
   search.addEventListener('input', () => {
     clearTimeout(timer);

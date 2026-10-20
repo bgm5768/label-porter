@@ -119,7 +119,7 @@ class RebuildTests(unittest.TestCase):
             detail = json.loads((reports / "review/000001.json").read_text(encoding="utf-8"))
             self.assertEqual(detail["final_record"], actual)
             self.assertTrue(detail["applied_with_advisories"])
-            self.assertEqual(outcome.summary["partition_records"]["changed"], 1)
+            self.assertEqual(outcome.summary["partition_records"]["examine"], 1)
 
     def test_profile_review_and_validation(self):
         config = load_config(PROFILE)

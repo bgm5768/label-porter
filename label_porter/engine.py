@@ -106,8 +106,8 @@ def run(source_directory: Path | str, result_files: list[Path | str], output_dir
 def _execute_run(run_dir, source, result_paths, inventory, selected, config,
                  preview, progress, cancel, split_output):
     data_dir = run_dir / "data"
-    report = Reports(run_dir / "reports", split_output=split_output)
-    summary = {"version": 3, "profile": config["name"], "preview": bool(preview), "status": "running",
+    report = Reports(run_dir / "reports", split_output=split_output, preview=preview)
+    summary = {"version": 4, "profile": config["name"], "preview": bool(preview), "status": "running",
                "started_at": _now(), "source_directory": str(source), "run_directory": str(run_dir),
                "split_output": bool(split_output), "partition_status": "pending" if split_output else "disabled",
                "source_files": len(inventory), "label_files": len(selected), "source_records": 0, "result_records": 0}
@@ -170,6 +170,7 @@ def _execute_run(run_dir, source, result_paths, inventory, selected, config,
                     value = expression(spec["key"], _context(row, _meta(path, str(path), row_number)))
                     key = canonical_key(value)
                     result_index[key].append({"row": row, "file": str(path), "number": row_number, "key": value})
+                    report.result_input(str(path), row_number, value, row)
                 except (ValueError, TypeError, KeyError) as exc:
                     invalid_rows += 1
                     report.record("result", "invalid_result", result_file=str(path), result_row=row_number, reason=str(exc), evidence={"platform_record": row})
@@ -258,24 +259,24 @@ def _execute_run(run_dir, source, result_paths, inventory, selected, config,
                 source_path = f"doc:{doc_index}{pointer}"
                 matches = result_index.get(key, [])
                 detail = {"scope": "source", "source_file": relative.as_posix(), "record_path": source_path, "key": value}
-                if len(source_index[key]) > 1:
-                    report.record(**detail, status="duplicate_source_key", reason="원본 연결키가 중복되어 자동 반영하지 않았습니다.",
-                                  evidence={"source_candidates": source_evidence(key), "platform_candidates": matches})
-                    continue
-                if not matches:
-                    report.record(**detail, status="no_result", reason="다운로드 결과에 해당 키가 없습니다. 원본을 보존했으며 작업 누락 여부는 별도 확인이 필요합니다.")
-                    continue
-                if len(matches) > 1:
-                    report.record(**detail, status="duplicate_result", reason=f"같은 키의 작업 결과 {len(matches)}건이 있습니다. 최신 값을 임의 선택하지 않았습니다.",
-                                  evidence={"source_candidates": source_evidence(key), "platform_candidates": matches})
-                    continue
-                match = matches[0]
-                detail.update(result_file=match["file"], result_row=match["number"])
                 if document is None:
                     document = read_document(base / relative, config["source"].get("encoding", "utf-8-sig"), "json")
                     if document.sha256 != manifest_by_file[relative]["source_sha256"]:
                         raise DataError(f"검사 중 원본/복사본이 변경되었습니다: {relative}")
                 original = get_pointer(document.docs[doc_index], pointer)
+                if len(source_index[key]) > 1:
+                    report.record(**detail, status="duplicate_source_key", reason="원본 연결키가 중복되어 자동 반영하지 않았습니다.",
+                                  evidence={"source_record": original, "final_record": original, "source_candidates": source_evidence(key), "platform_candidates": matches})
+                    continue
+                if not matches:
+                    report.record(**detail, status="no_result", reason="대응하는 보완 데이터가 없습니다. 원본을 보존하고 examine으로 분리합니다.", evidence={"source_record": original, "final_record": original})
+                    continue
+                if len(matches) > 1:
+                    report.record(**detail, status="duplicate_result", reason=f"같은 키의 작업 결과 {len(matches)}건이 있습니다. 최신 값을 임의 선택하지 않았습니다.",
+                                  evidence={"source_record": original, "final_record": original, "source_candidates": source_evidence(key), "platform_candidates": matches})
+                    continue
+                match = matches[0]
+                detail.update(result_file=match["file"], result_row=match["number"])
                 try:
                     advisories = []
                     candidate, changes, notes, status = apply_record(original, match["row"], config, _meta(relative, match["file"], match["number"]), advisories=advisories)
@@ -286,8 +287,11 @@ def _execute_run(run_dir, source, result_paths, inventory, selected, config,
                             set_pointer(document.docs[doc_index], pointer, candidate)
                     evidence = {"issues": advisories, "source_record": original, "platform_record": match["row"],
                                 "final_record": original if preview else candidate, "candidate_record": candidate,
-                                "applied_with_advisories": True, "preview": bool(preview),
-                                "candidate_note": "검증을 통과한 반영 예정 값입니다." if preview else "복사본에 반영한 값입니다."} if advisories else None
+                                "applied_with_advisories": bool(advisories), "preview": bool(preview), "changes": changes,
+                                "candidate_note": "검증을 통과한 반영 예정 값입니다." if preview else "복사본에 반영한 값입니다."}
+                    if not preview and not advisories:
+                        evidence.pop("candidate_record")
+                        evidence.pop("candidate_note")
                     pending.append((detail, "planned_update" if preview and status == "updated" else status, changes, notes, evidence))
                 except (ValueError, TypeError, KeyError, IndexError, OverflowError) as exc:
                     try:
@@ -326,11 +330,11 @@ def _execute_run(run_dir, source, result_paths, inventory, selected, config,
                     status = "duplicate_result" if len(matches) > 1 else "duplicate_source_key"
                     report.record("result", status, key=match["key"], result_file=match["file"], result_row=match["number"], reason="중복 키로 인해 연결을 확정할 수 없습니다.",
                                   evidence={"source_candidates": source_evidence(key), "platform_candidates": matches})
-        if split_output:
-            emit("partition", "변경된 라벨과 원본 그대로인 라벨을 따로 저장합니다.")
-            export_partitions(run_dir, base, selected, record_positions, changed_positions,
-                              manifest_by_file, config["source"], summary, manifest, preview, checkpoint, emit)
-        summary["status"] = "completed_with_issues" if any(report.counts[key] for key in ISSUES) or report.advisory_rows else "completed"
+        emit("partition", "검토 대상은 examine으로, 정상 데이터는 처리 상태별로 분리합니다.")
+        export_partitions(run_dir, base, selected, record_positions, changed_positions,
+                          manifest_by_file, config["source"], summary, manifest, preview, checkpoint, emit,
+                          report.examine_positions, report.examine_files, split_output)
+        summary["status"] = "completed_with_issues" if any(report.counts[key] for key in ISSUES) or report.advisory_rows or report.counts["no_result"] else "completed"
     except Cancelled as exc:
         summary.update(status="cancelled", error=str(exc))
     except Exception as exc:

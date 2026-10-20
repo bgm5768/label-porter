@@ -65,7 +65,7 @@ def self_test(output):
             actual = json.loads((result.directory / "data" / "one.json").read_text(encoding="utf-8"))
             assert actual == {"id": "test", "label": "new", "metadata": {"keep": True}}
             assert json.loads((result.directory / "changed" / "labels" / "one.json").read_text(encoding="utf-8")) == actual
-            assert result.summary["partition_records"] == {"changed": 1, "unchanged": 0}
+            assert result.summary["partition_records"] == {"changed": 1, "unchanged": 0, "examine": 0}
             assert result.directory.name == "001" and len(result.directory.parent.name) == 10
             assert "assets" not in result.summary
             many = base / "many_originals"
