@@ -1,0 +1,10 @@
+{
+  "schema_version": 1,
+  "name": "새 프로젝트 · 기본 템플릿",
+  "description": "원본 {id, label, ...}과 결과 {source_id, corrected_label, ...}를 연결하는 시작용 템플릿입니다. 실제 필드 경로에 맞게 source.key, result.key, rules를 변경한 뒤 미리보기를 실행하세요.",
+  "source": {"glob": "**/*.json", "record_mode": "auto", "records_path": "", "key": "/id"},
+  "result": {"record_mode": "auto", "records_path": "", "key": "/source_id"},
+  "rules": [
+    {"kind": "field", "from": "/corrected_label", "to": "/label", "type": "string", "nonempty": true}
+  ]
+}

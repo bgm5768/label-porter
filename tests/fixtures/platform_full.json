@@ -1,0 +1,167 @@
+{
+  "schema_version": 1,
+  "name": "013 · 플랫폼 어절·시간·전사 전체 반영 (2.4)",
+  "description": "라벨 포터 2.4 이상. 플랫폼 어절을 시작 시간순으로 정렬하여 목록을 전체 재구성합니다. 추가/삭제/분할/병합 및 텍스트 수정을 반영하고 ID는 1부터 다시 부여합니다. 시간은 소수점 한 자리 반올림, 전사는 최종 어절을 공백으로 연결합니다. 기존 발음 오류 태그는 ID와 유일한 동일 텍스트가 확인된 경우만 재연결하며, 불확실한 태그는 held_references.jsonl에 원문 보관합니다. 결과에 없는 원본 레코드는 보존합니다.",
+  "source": {
+    "glob": "**/*.json",
+    "record_mode": "object",
+    "key": {
+      "meta": "file_name"
+    }
+  },
+  "result": {
+    "format": "json",
+    "record_mode": "auto",
+    "key": {
+      "path": "/importData_ID_M4AAXZ",
+      "transforms": [
+        {
+          "op": "basename"
+        }
+      ]
+    }
+  },
+  "rules": [
+    {
+      "kind": "rebuild_items",
+      "from": "/orthographic_1/data",
+      "to": "/Segmentation/eojeols",
+      "sort_by": "/value/startTime",
+      "source_key": {
+        "scope": "source",
+        "path": "/eojeolID"
+      },
+      "result_key": {
+        "path": "/objectID",
+        "transforms": [
+          {
+            "op": "regex",
+            "pattern": "_([0-9]+)$",
+            "group": 1
+          },
+          {
+            "op": "integer"
+          }
+        ]
+      },
+      "identity_guards": [
+        {
+          "source": {
+            "scope": "source",
+            "path": "/text",
+            "transforms": [
+              {
+                "op": "strip"
+              }
+            ]
+          },
+          "result": {
+            "path": "/value/name_J2REGU",
+            "transforms": [
+              {
+                "op": "strip"
+              }
+            ]
+          }
+        }
+      ],
+      "rules": [
+        {
+          "kind": "field",
+          "from": {
+            "meta": "item_number"
+          },
+          "to": "/eojeolID",
+          "type": "integer",
+          "allow_create": true
+        },
+        {
+          "kind": "field",
+          "from": {
+            "path": "/value/name_J2REGU",
+            "transforms": [
+              {
+                "op": "strip"
+              }
+            ]
+          },
+          "to": "/text",
+          "type": "string",
+          "allow_create": true
+        },
+        {
+          "kind": "field",
+          "from": {
+            "path": "/value/startTime",
+            "transforms": [
+              {
+                "op": "round",
+                "digits": 1
+              }
+            ]
+          },
+          "to": "/start",
+          "type": "number",
+          "allow_create": true
+        },
+        {
+          "kind": "field",
+          "from": {
+            "path": "/value/endTime",
+            "transforms": [
+              {
+                "op": "round",
+                "digits": 1
+              }
+            ]
+          },
+          "to": "/end",
+          "type": "number",
+          "allow_create": true
+        }
+      ],
+      "references": [
+        {
+          "path": "/PronunciationErrorTags",
+          "key": "/eojeolID",
+          "target_key": "/eojeolID"
+        }
+      ]
+    },
+    {
+      "kind": "field",
+      "from": {
+        "scope": "source",
+        "path": "/Segmentation/eojeols",
+        "transforms": [
+          {
+            "op": "pluck",
+            "path": "/text"
+          },
+          {
+            "op": "join",
+            "separator": " "
+          }
+        ]
+      },
+      "to": "/RecordingMetadata/orthographic",
+      "type": "string"
+    }
+  ],
+  "assertions": [
+    {
+      "kind": "intervals",
+      "path": "/Segmentation/eojeols",
+      "start": "/start",
+      "end": "/end",
+      "ordered": true
+    },
+    {
+      "kind": "references",
+      "targets": "/Segmentation/eojeols",
+      "target_key": "/eojeolID",
+      "references": "/PronunciationErrorTags",
+      "reference_key": "/eojeolID"
+    }
+  ]
+}

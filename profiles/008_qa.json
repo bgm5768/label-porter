@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "name": "008 · 업무 질의 수정",
+  "description": "예제 설정입니다. 원본 id와 importData_id를 연결합니다. 오류 O의 수정 질의만 반영하고, 원본 질의가 플랫폼 반입 당시 값 또는 이미 반영된 값과 같은지 확인합니다.",
+  "source": {"glob": "**/*.json", "record_mode": "array", "records_path": "", "key": "/id"},
+  "result": {"record_mode": "auto", "records_path": "", "key": "/importData_id", "csv_json_columns": ["instruction_error", "instruction_error_modify"]},
+  "include_when": [{"left": {"path": "/unableToWork", "transforms": [{"op": "integer"}]}, "op": "eq", "value": 0}],
+  "checks": [{"left": "/instruction_error/data/0/value/0/label", "op": "in", "value": ["O", "X"], "message": "오류 여부가 O/X 중 하나가 아닙니다."}],
+  "rules": [
+    {
+      "kind": "field",
+      "from": "/instruction_error_modify/data/0/value",
+      "to": "/instruction",
+      "type": "string",
+      "nonempty": true,
+      "expected": "/importData_instruction",
+      "when": [{"left": "/instruction_error/data/0/value/0/label", "op": "eq", "value": "O"}]
+    }
+  ]
+}

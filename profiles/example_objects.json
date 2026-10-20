@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "name": "새 프로젝트 · 객체/좌표 템플릿",
+  "description": "이미지/3D 등 객체별 ID가 있는 JSON용 예시입니다. 특정 이미지 형식을 가정하지 않습니다. labels의 객체 ID로 연결하며 결과에 없는 기존 객체를 보존합니다. 좌표 단위가 다르면 from.transforms에 scale/offset을 명시하세요.",
+  "source": {"glob": "**/*.json", "record_mode": "auto", "key": "/id"},
+  "result": {"key": "/source_id"},
+  "rules": [
+    {
+      "kind": "items", "from": "/objects", "to": "/labels",
+      "source_key": {"scope": "source", "path": "/object_id"},
+      "result_key": "/object_id", "require_same_keys": false,
+      "rules": [
+        {"kind": "field", "from": "/category", "to": "/class", "type": "string", "nonempty": true},
+        {"kind": "field", "from": "/x", "to": "/position/x", "type": "number"},
+        {"kind": "field", "from": "/y", "to": "/position/y", "type": "number"}
+      ]
+    }
+  ]
+}

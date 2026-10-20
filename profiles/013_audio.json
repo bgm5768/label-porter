@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "name": "013 · 음성 구간 (어절 동일성 확인)",
+  "description": "예제 설정입니다. 파일명으로 원본을 찾고 objectID 끝 숫자와 eojeolID를 연결합니다. 어절 수·ID·텍스트가 일치하는 경우에만 반영합니다. 어절 변경/분할/병합은 원본을 보존하고 검토 대상으로 보고합니다. 시간 단위는 초입니다.",
+  "source": {"glob": "**/*.json", "record_mode": "object", "key": {"meta": "file_name"}},
+  "result": {"record_mode": "auto", "key": {"path": "/importData_ID_M4AAXZ", "transforms": [{"op": "basename"}]}, "csv_json_columns": ["orthographic_1"]},
+  "include_when": [{"left": {"path": "/unableToWork", "transforms": [{"op": "integer"}]}, "op": "eq", "value": 0}],
+  "rules": [
+    {
+      "kind": "items",
+      "from": "/orthographic_1/data",
+      "to": "/Segmentation/eojeols",
+      "source_key": {"scope": "source", "path": "/eojeolID"},
+      "result_key": {"path": "/objectID", "transforms": [{"op": "regex", "pattern": "_([0-9]+)$", "group": 1}, {"op": "integer"}]},
+      "require_same_keys": true,
+      "identity_guards": [
+        {"source": {"scope": "source", "path": "/text", "transforms": [{"op": "strip"}]}, "result": {"path": "/value/name_J2REGU", "transforms": [{"op": "strip"}]}}
+      ],
+      "rules": [
+        {"kind": "field", "from": {"path": "/value/name_J2REGU", "transforms": [{"op": "strip"}]}, "to": "/text", "type": "string", "nonempty": true},
+        {"kind": "field", "from": "/value/startTime", "to": "/start", "type": "number"},
+        {"kind": "field", "from": "/value/endTime", "to": "/end", "type": "number"}
+      ]
+    }
+  ],
+  "assertions": [
+    {"kind": "intervals", "path": "/Segmentation/eojeols", "start": "/start", "end": "/end", "duration": "/RecordingMetadata/recorded_time_sec", "tolerance": 0.02, "ordered": true},
+    {"kind": "references", "targets": "/Segmentation/eojeols", "target_key": "/eojeolID", "references": "/PronunciationErrorTags", "reference_key": "/eojeolID"}
+  ]
+}

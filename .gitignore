@@ -1,0 +1,48 @@
+# Python environments and caches
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+.coverage
+htmlcov/
+
+# Build products and generated reports (keep LabelPorter.spec)
+/build/
+/dist/
+/outputs/
+*.exe
+*.zip
+*.log
+
+# Local datasets, exported results, and user-specific profiles
+/data/
+/input/
+/inputs/
+/originals/
+/results/
+/reports/
+/local_profiles/
+/1차/
+/포팅결과/
+*_result_*.json
+*_최종 검수 전.json
+settings.json
+
+# Credentials and machine/editor settings
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+credentials.json
+.idea/
+.vscode/
+Thumbs.db
+Desktop.ini
+.DS_Store
+*.tmp
+*.bak
