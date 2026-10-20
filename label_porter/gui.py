@@ -350,7 +350,7 @@ class App(Workflow):
     def _builder_changed(self):
         if self.route != "builder" or self.builder is None: return
         self.page_title.set("데이터로 규칙 만들기")
-        self.page_caption.set(f"{self.builder.stage + 1}. {self.builder.TITLES[self.builder.stage]} · 같은 구조의 JSON · 선택하지 않은 값은 원본 유지")
+        self.page_caption.set(f"{self.builder.stage + 1}. {self.builder.TITLES[self.builder.stage]} · 다른 필드명도 직접 연결 · 선택하지 않은 값은 원본 유지")
         self.status.set(self.builder.status.get())
         self._sync_actions()
 

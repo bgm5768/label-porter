@@ -9,7 +9,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from label_porter.config import validate_config
-from label_porter.easy_rules import analyze_inputs, select_key, make_profile
+from label_porter.easy_rules import analyze_inputs, select_key, make_profile, connection_option, key_stats
 from label_porter.formats import DataError
 from label_porter.gui import App
 from label_porter.rules import apply_record, ReviewRequired
@@ -103,11 +103,62 @@ class EasyRulesTests(unittest.TestCase):
     def test_unrecognized_or_ambiguous_data_and_cancellation_are_explicit(self):
         self.write(self.source/"one.json", {"id": "A", "text": "before"})
         self.write(self.result, [{"platform_id": "A", "value": "after"}])
-        with self.assertRaisesRegex(DataError, "찾지 못했습니다"): analyze_inputs(self.source, [self.result])
+        inputs = analyze_inputs(self.source, [self.result])
+        self.assertEqual(inputs.candidates[0]["result_path"], "/platform_id")
         with self.assertRaisesRegex(DataError, "중단"): analyze_inputs(self.source, [self.result], cancel=lambda: True)
         self.write(self.result, {"data": [{"id": "A"}], "records": [{"id": "A"}]})
         with self.assertRaisesRegex(DataError, "여러 개"): analyze_inputs(self.source, [self.result])
         with self.assertRaisesRegex(DataError, "다른 파일"): analyze_inputs(self.source, [self.source/"one.json"])
+
+    def test_platform_id_and_nested_correction_preserve_blank_and_other_fields(self):
+        originals = [{"id": "A", "instruction": "old A", "output": "keep A"},
+                     {"id": "B", "instruction": "old B", "output": "keep B"}]
+        incoming = [{"dataID": str(i), "importData_id": row["id"], "importData_instruction": row["instruction"],
+                     "instruction_error_modify": {"data": [{"value": "new A" if i == 0 else ""}]}}
+                    for i, row in enumerate(originals)]
+        self.write(self.source/"all.json", originals)
+        # The platform uses whitespace-separated objects, despite the .json extension.
+        self.result.write_text("\n".join(json.dumps(r) for r in incoming), encoding="utf-8")
+        inputs = analyze_inputs(self.source, [self.result])
+        self.assertEqual((inputs.candidates[0]["path"], inputs.candidates[0]["result_path"]), ("/id", "/importData_id"))
+        self.assertEqual(inputs.candidates[0]["matched"], 2)
+        data, options = select_key(inputs, "/id", result_path="/importData_id")
+        selected = [o["path"] for o in options if o["selected"]]
+        self.assertEqual(selected, ["/instruction"])
+        profile = make_profile(data, options, selected)
+        self.assertEqual(profile["rules"][0]["from"], "/instruction_error_modify/data/0/value")
+        a, *_ = apply_record(originals[0], incoming[0], profile, {})
+        b, *_ = apply_record(originals[1], incoming[1], profile, {})
+        self.assertEqual(a, {**originals[0], "instruction": "new A"})
+        self.assertEqual(b, originals[1])
+        incoming[0]["instruction_error_modify"]["data"].append({"value": "do not silently discard"})
+        with self.assertRaises(ReviewRequired): apply_record(originals[0], incoming[0], profile, {})
+        missing = copy.deepcopy(incoming[1]); missing.pop("instruction_error_modify")
+        actual, *_ = apply_record(originals[1], missing, profile, {})
+        self.assertEqual(actual, originals[1])
+
+    def test_manual_connections_without_recommendations_and_empty_value_policy(self):
+        before = {"id": "A", "text": "old", "items": [{"label": "old"}]}
+        after = {"dataID": "B", "new_text": "", "values": [{"label": "new"}]}
+        self.write(self.source/"one.json", before); self.write(self.result, after)
+        inputs = analyze_inputs(self.source, [self.result])
+        self.assertEqual(inputs.candidates, [])
+        data, options = select_key(inputs, "/id", result_path="/dataID")
+        self.assertEqual(key_stats(inputs, "/id", "/dataID")["matched"], 0)
+        self.assertEqual(CounterStates(data), {"원본만 있음": 1, "보완만 있음": 1})
+        item = connection_option(inputs, data, "/text", "/new_text", skip_empty=False)
+        profile = make_profile(data, [item], ["/text"])
+        actual, *_ = apply_record(before, after, profile, {})
+        self.assertEqual(actual["text"], "")
+        item["skip_empty"] = True
+        actual, *_ = apply_record(before, after, make_profile(data, [item], ["/text"]), {})
+        self.assertEqual(actual["text"], "old")
+        with self.assertRaisesRegex(DataError, "기준 필드"):
+            connection_option(inputs, data, "/id", "/new_text")
+        array = connection_option(inputs, data, "/items", "/values")
+        child = connection_option(inputs, data, "/items/0/label", "/values/0/label")
+        with self.assertRaisesRegex(DataError, "동시에"):
+            make_profile(data, [array, child], ["/items", "/items/0/label"])
 
 
 def CounterStates(data):
@@ -119,6 +170,51 @@ class EasyRulesUiTests(unittest.TestCase):
     setUp = EasyRulesTests.setUp
     write = EasyRulesTests.write
     audio = EasyRulesTests.audio
+
+    def test_manual_key_and_field_selection_remain_available_without_auto_matches(self):
+        self.write(self.source/"a.json", {"id": "A", "question": "old", "answer": "keep"})
+        incoming = {"dataID": "platform-9", "reference": "B", "correction": {"data": [{"value": "new"}]}}
+        self.write(self.result, incoming)
+        root = tk.Tk(); root.withdraw()
+        errors = []
+        root.report_callback_exception = lambda *args: errors.append("".join(traceback.format_exception(*args)))
+        def wait(predicate):
+            end = time.monotonic() + 10
+            while not predicate() and time.monotonic() < end:
+                root.update(); time.sleep(.01)
+            self.assertTrue(predicate(), errors)
+        try:
+            with patch.object(App, "_load_settings"), patch.object(App, "_save_settings"):
+                app = App(root); app._show_builder(); panel = app.builder
+                panel.source.set(str(self.source)); panel.results = [str(self.result)]; panel._render_results()
+                panel.next(); wait(lambda: panel.inputs is not None and not panel.busy)
+                self.assertEqual(panel.stage, 1)
+                self.assertEqual(panel.inputs.candidates, [])
+                self.assertTrue(panel.key_manual.winfo_manager())
+                panel._choose_path(panel.source_key_box, "/id")
+                panel._choose_path(panel.result_key_box, "/reference")
+                panel._manual_key(); wait(lambda: panel.data is not None and not panel.busy)
+                self.assertIn("연결 0쌍", panel.connection.get())
+                self.assertTrue(panel.field_manual.winfo_manager())
+                incoming["reference"] = "A"; self.write(self.result, incoming)
+                panel.refresh(); wait(lambda: panel.inputs is not None and not panel.busy)
+                panel._choose_path(panel.source_key_box, "/id")
+                panel._choose_path(panel.result_key_box, "/reference")
+                panel._manual_key(); wait(lambda: panel.data is not None and not panel.busy)
+                panel._choose_path(panel.target_box, "/question")
+                panel._choose_path(panel.incoming_box, "/correction/data/0/value")
+                panel._apply_connection()
+                self.assertEqual(panel.selected, {"/question"})
+                panel.next(); wait(lambda: panel.preview.pair is not None)
+                self.assertEqual(panel.preview.pair["output"], {"id": "A", "question": "new", "answer": "keep"})
+                panel.back(); panel._open_connection(edit=True)
+                self.assertEqual(panel._choice(panel.incoming_box), "/correction/data/0/value")
+                self.assertTrue(panel.skip_empty.get())
+                self.assertFalse(errors, errors)
+        finally:
+            if "app" in locals(): app._close_mapping(); app._close_builder()
+            for job in root.tk.call("after", "info"): root.after_cancel(job)
+            root.destroy()
 
     def test_complete_builder_uses_cached_data_and_existing_validation_workflow(self):
         before, after = self.audio()

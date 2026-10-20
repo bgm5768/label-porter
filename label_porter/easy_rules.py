@@ -1,14 +1,15 @@
-"""Deterministic, same-schema rule creation using the existing porter engine."""
+"""Data-driven rule creation using the existing porter engine."""
 from __future__ import annotations
 
 import copy
 from collections import Counter
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from .config import validate_config
 from .formats import MISSING, DataError, canonical_key, equivalent, escape_token, get_pointer, read_document, records
 from .pair_preview import PreviewData, _file_stamp, build_catalog, metadata, source_paths
+from .mapping import collect_fields, _length_checks
 
 
 NAMES = {
@@ -16,9 +17,11 @@ NAMES = {
     "/Segmentation/eojeols": "어절 목록 · ID / 텍스트 / 시간",
     "/RecordingMetadata/orthographic": "문장 전체 전사",
     "/PronunciationErrorTags": "발음 오류 태그",
+    "/instruction": "질의", "/input": "입력 문맥", "/output": "답변",
 }
 RECOMMENDED = {"/Segmentation/eojeols", "/RecordingMetadata/orthographic"}
-COMMON_LABELS = {"label", "text", "transcript", "transcription", "category", "class", "answer"}
+COMMON_LABELS = {"label", "text", "transcript", "transcription", "category", "class", "answer",
+                 "instruction", "output"}
 
 
 def friendly(path):
@@ -77,12 +80,18 @@ class Inputs:
     incoming: list
     fingerprint: tuple
     candidates: list
+    source_fields: dict = field(default_factory=dict)
+    result_fields: dict = field(default_factory=dict)
 
 
-def key_values(rows, path):
+def key_values(rows, path, info=None, checkpoint=lambda: None):
     values, counts = [], Counter()
     for row, *_ in rows:
+        checkpoint()
         try:
+            if info and any(not isinstance(get_pointer(row, p), list) or len(get_pointer(row, p)) != n
+                            for p, n in info.guards.items()):
+                raise DataError("KEY 배열 길이가 다릅니다.")
             value = canonical_key(get_pointer(row, path))
         except (ValueError, TypeError):
             value = None
@@ -90,6 +99,60 @@ def key_values(rows, path):
         if value is not None:
             counts[value] += 1
     return values, counts
+
+
+def key_stats(inputs, source_path, result_path, checkpoint=lambda: None):
+    _, left = key_values(inputs.originals, source_path, inputs.source_fields.get(source_path), checkpoint)
+    _, right = key_values(inputs.incoming, result_path, inputs.result_fields.get(result_path), checkpoint)
+    return stats(left, right, len(inputs.originals), len(inputs.incoming), source_path, result_path)
+
+
+def stats(left, right, source_total, result_total, source_path, result_path):
+    return {"path": source_path, "result_path": result_path,
+            "matched": sum(left[k] == right[k] == 1 for k in left.keys() & right.keys()),
+            "source_missing": source_total - sum(left.values()), "result_missing": result_total - sum(right.values()),
+            "source_duplicates": sum(v for v in left.values() if v > 1),
+            "result_duplicates": sum(v for v in right.values() if v > 1),
+            "recommended": key_name(source_path) and key_name(result_path)}
+
+
+def key_fields(fields):
+    return {p: f for p, f in fields.items() if f.kinds - {"null"} and f.kinds <= {"string", "integer", "number", "null"}}
+
+
+def normalized_name(path):
+    return path.rsplit("/", 1)[-1].removeprefix("importData_").lower()
+
+
+def recommend_keys(inputs, checkpoint):
+    # Full counts are computed once per field, only after a name/sample suggests a pair.
+    def short_fields(fields):
+        return {p: f for p, f in key_fields(fields).items()
+                if key_name(p) or any(len(str(v)) <= 256 for v in f.examples)}
+    left_fields, right_fields = short_fields(inputs.source_fields), short_fields(inputs.result_fields)
+    pairs = []
+    for a, af in left_fields.items():
+        for b, bf in right_fields.items():
+            checkpoint()
+            named = normalized_name(a) == normalized_name(b)
+            ids = key_name(a) and key_name(b)
+            examples = {canonical_key(v) for v in af.examples if isinstance(v, (str, int, float)) and v != ""}
+            overlap = any(canonical_key(v) in examples for v in bf.examples
+                          if isinstance(v, (str, int, float)) and v != "")
+            if named or ids or overlap:
+                pairs.append((not ids, not named, a, b))
+    cache_left, cache_right, candidates = {}, {}, []
+    for _, _, a, b in sorted(pairs)[:200]:
+        checkpoint()
+        if a not in cache_left:
+            cache_left[a] = key_values(inputs.originals, a, left_fields[a], checkpoint)[1]
+        if b not in cache_right:
+            cache_right[b] = key_values(inputs.incoming, b, right_fields[b], checkpoint)[1]
+        candidate = stats(cache_left[a], cache_right[b], len(inputs.originals), len(inputs.incoming), a, b)
+        if candidate["matched"]: candidates.append(candidate)
+    candidates.sort(key=lambda c: (-int(c["recommended"]), -c["matched"],
+                                  normalized_name(c["path"]) != normalized_name(c["result_path"]), c["path"]))
+    return candidates
 
 
 def analyze_inputs(source, result_files, progress=lambda message: None, cancel=lambda: False):
@@ -103,7 +166,7 @@ def analyze_inputs(source, result_files, progress=lambda message: None, cancel=l
     if len(set(results)) != len(results):
         raise DataError("같은 보완 파일을 두 번 선택할 수 없습니다.")
     if any(p.suffix.lower() not in (".json", ".jsonl", ".ndjson") for p in results):
-        raise DataError("간편 작성은 JSON / JSONL / NDJSON을 지원합니다. CSV·플랫폼 전용 구조는 AI 규칙을 불러오세요.")
+        raise DataError("간편 작성은 JSON / JSONL / NDJSON을 지원합니다. CSV는 AI 규칙을 불러오세요.")
     extensions = {p.suffix.lower() for p in source_paths(source, "**/*", checkpoint)
                   if p.suffix.lower() in (".json", ".jsonl", ".ndjson")}
     if len(extensions) != 1:
@@ -151,43 +214,29 @@ def analyze_inputs(source, result_files, progress=lambda message: None, cancel=l
     source_spec["glob"] = pattern
     result_spec["format"] = "json"
     progress("같은 데이터를 찾을 기준을 비교하고 있습니다…")
-    source_fields = set().union(*(leaves(row) for row, *_ in originals[:100]))
-    result_fields = set().union(*(leaves(row) for row, *_ in incoming[:100]))
-    common = sorted(source_fields & result_fields, key=lambda p: (not key_name(p), p.count("/"), p))
-    candidates = []
-    for path in common[:50]:
-        checkpoint()
-        _, left = key_values(originals, path)
-        _, right = key_values(incoming, path)
-        matched = sum(left[k] == right[k] == 1 for k in left.keys() & right.keys())
-        if not matched:
-            continue
-        candidates.append({"path": path, "matched": matched,
-                           "source_missing": len(originals) - sum(left.values()),
-                           "result_missing": len(incoming) - sum(right.values()),
-                           "source_duplicates": sum(v for v in left.values() if v > 1),
-                           "result_duplicates": sum(v for v in right.values() if v > 1),
-                           "recommended": key_name(path)})
-    candidates.sort(key=lambda c: (-int(c["recommended"]), -c["matched"], c["path"].count("/"), c["path"]))
-    if not candidates:
-        raise DataError("같은 경로에서 유일하게 연결되는 값을 찾지 못했습니다. 플랫폼 전용 구조나 다른 필드명은 AI 규칙 작성 가이드를 사용하세요.")
+    inputs = Inputs(str(source), [str(p) for p in results], source_spec, result_spec, originals, incoming, stamp, [],
+                    collect_fields([row for row, *_ in originals]), collect_fields([row for row, *_ in incoming]))
+    inputs.candidates = recommend_keys(inputs, checkpoint)
     if _file_stamp([*source_paths(source, pattern, checkpoint), *results], source, checkpoint) != stamp:
         raise DataError("분석 중 입력 파일이 바뀌었습니다. 다시 분석하세요.")
-    return Inputs(str(source), [str(p) for p in results], source_spec, result_spec, originals, incoming, stamp, candidates)
+    return inputs
 
 
-def select_key(inputs, path, cancel=lambda: False):
-    if path not in {c["path"] for c in inputs.candidates}:
-        raise DataError("연결 기준을 선택하세요.")
+def select_key(inputs, path, cancel=lambda: False, result_path=None):
+    result_path = result_path or path
+    if path not in key_fields(inputs.source_fields) or result_path not in key_fields(inputs.result_fields):
+        raise DataError("원본과 보완의 연결 기준을 각각 선택하세요.")
     def checkpoint():
         if cancel(): raise DataError("분석을 중단했습니다.")
-    left, left_counts = key_values(inputs.originals, path)
-    right, right_counts = key_values(inputs.incoming, path)
+    left, left_counts = key_values(inputs.originals, path, inputs.source_fields[path], checkpoint)
+    right, right_counts = key_values(inputs.incoming, result_path, inputs.result_fields[result_path], checkpoint)
     result_records = [(key, *row) for key, row in zip(right, inputs.incoming)]
     found = {key: row for key, row in zip(right, inputs.incoming)
              if key is not None and right_counts[key] == 1 and key in left_counts}
     profile = {"schema_version": 1, "name": "간편 규칙", "source": {**inputs.source_spec, "key": path},
-               "result": {**inputs.result_spec, "key": path}, "rules": [{"kind": "field", "from": path, "to": path}]}
+               "result": {**inputs.result_spec, "key": result_path}, "rules": [{"kind": "field", "from": result_path, "to": path}]}
+    checks = _length_checks(inputs.source_fields[path], "source") + _length_checks(inputs.result_fields[result_path], "result")
+    if checks: profile["checks"] = checks
     data = PreviewData(profile, inputs.originals, left, left_counts, found, right_counts,
                        len(inputs.incoming), sum(k is None for k in right), inputs.fingerprint, result_records)
     data.catalog = build_catalog(data, checkpoint)
@@ -198,6 +247,8 @@ def select_key(inputs, path, cancel=lambda: False):
         checkpoint()
         a, b = leaves(original), leaves(incoming)
         for field in a.keys() & b.keys():
+            if field not in inputs.source_fields or field not in inputs.result_fields:
+                continue
             if field == path or field.startswith(path + "/") or path.startswith(field + "/"):
                 continue
             item = fields.setdefault(field, {"path": field, "label": friendly(field), "count": 0,
@@ -213,9 +264,60 @@ def select_key(inputs, path, cancel=lambda: False):
         item["sample_count"] = len(samples)
         options.append(item)
     options.sort(key=lambda item: (not item["selected"], item["path"]))
-    if not options:
-        raise DataError("연결 기준 외에 같은 구조로 반영할 항목이 없습니다. AI 규칙을 사용하세요.")
+    # Platform correction controls have a different path from imported original values.
+    targets = set(inputs.source_fields) - {item["path"] for item in options}
+    for target in sorted(targets):
+        checkpoint()
+        if related(target, path): continue
+        candidates = [f"/{target.lstrip('/')}{suffix}/data/0/value"
+                      for suffix in ("_error_modify", "_modify", "_corrected")]
+        candidates += ["/importData_" + target.lstrip("/")]
+        for incoming_path in candidates:
+            if incoming_path not in inputs.result_fields: continue
+            try:
+                item = connection_option(inputs, data, target, incoming_path, skip_empty=True)
+            except DataError:
+                continue
+            item["selected"] = not incoming_path.startswith("/importData_")
+            options.append(item)
+            break
+    options.sort(key=lambda item: (not item["selected"], item["path"]))
     return data, options
+
+
+def related(a, b):
+    return a == b or a.startswith(b + "/") or b.startswith(a + "/")
+
+
+def connection_option(inputs, data, target, incoming_path, skip_empty=False):
+    """One explicit destination/source selection, compiled without guessed transforms."""
+    if target not in inputs.source_fields or incoming_path not in inputs.result_fields:
+        raise DataError("원본 대상과 가져올 보완 필드를 각각 선택하세요.")
+    if related(target, data.profile["source"]["key"]):
+        raise DataError("같은 데이터를 찾는 기준 필드는 수정할 수 없습니다.")
+    a, b = inputs.source_fields[target], inputs.result_fields[incoming_path]
+    kinds = (a.kinds | b.kinds) - ({"null"} if skip_empty else set())
+    if len(kinds) > 1 and not kinds <= {"integer", "number"}:
+        raise DataError(f"자료형이 다릅니다: 원본 {a.kind} / 보완 {b.kind}. 변환이 필요하면 AI 규칙을 사용하세요.")
+    python_types = {"string": "str", "integer": "int", "number": "float", "boolean": "bool",
+                    "array": "list", "object": "dict", "null": "NoneType"}
+    pairs = [(row[0], data.results[key][0]) for key, row in zip(data.source_keys, data.originals)
+             if key is not None and data.source_counts[key] == data.result_counts[key] == 1][:200]
+    count = changed = empty = 0
+    before = after = MISSING
+    for original, incoming in pairs:
+        av, bv = get_pointer(original, target), get_pointer(incoming, incoming_path)
+        if av is MISSING or bv is MISSING: continue
+        count += 1
+        blank = bv is None or bv == [] or bv == {} or isinstance(bv, str) and not bv.strip()
+        empty += bool(blank)
+        changed += not equivalent(av, bv) and not (skip_empty and blank)
+        if before is MISSING or (skip_empty and after in ("", None) and not blank):
+            before, after = av, bv
+    return {"path": target, "from": incoming_path, "label": friendly(target), "count": count, "changed": changed,
+            "types": {python_types[k] for k in kinds or {"null"}}, "before": before, "after": after,
+            "sample_count": len(pairs), "selected": False, "skip_empty": skip_empty, "empty": empty,
+            "checks": _length_checks(a, "source") + _length_checks(b, "result")}
 
 
 def make_profile(data, options, selected, name="데이터로 만든 규칙", check_times=True):
@@ -225,13 +327,20 @@ def make_profile(data, options, selected, name="데이터로 만든 규칙", che
         raise DataError("반영할 항목을 한 개 이상 선택하세요.")
     profile = copy.deepcopy(data.profile)
     profile["name"] = name.strip() or "데이터로 만든 규칙"
-    profile["description"] = "같은 경로의 보완값을 그대로 복사합니다. 선택하지 않은 필드는 원본을 유지합니다. 목록은 추가·삭제와 내부 필드를 포함해 전체 반영하며 ID·시간값·전사를 임의로 재생성하지 않습니다."
+    profile["description"] = "선택한 보완 필드의 값을 원본 대상에 복사합니다. 선택하지 않은 필드는 원본 유지. 목록은 전체 반영하며 ID·시간·전사를 재생성하지 않습니다. 빈 값의 처리 정책은 각 규칙을 따릅니다."
     types = {"str": "string", "int": "integer", "float": "number", "bool": "boolean", "list": "array", "dict": "object", "NoneType": "null"}
     profile["rules"] = []
     for path in sorted(selected):
-        kinds = available[path]["types"]
-        rule = {"kind": "field", "from": path, "to": path,
+        if any(other != path and related(path, other) for other in selected):
+            raise DataError("목록 전체와 그 안의 개별 값을 동시에 선택할 수 없습니다. 한 가지 반영 방식을 선택하세요.")
+        item = available[path]
+        kinds = item["types"]
+        incoming_path = item.get("from", path)
+        rule = {"kind": "field", "from": incoming_path, "to": path,
                 "type": "number" if kinds <= {"int", "float"} else types[next(iter(kinds))]}
+        if item.get("checks"): rule["checks"] = copy.deepcopy(item["checks"])
+        if item.get("skip_empty"):
+            rule["when"] = [{"left": incoming_path, "op": "exists"}, {"left": incoming_path, "op": "nonempty"}]
         if kinds & {"dict", "list"}:
             rule["allow_container_replace"] = True
         profile["rules"].append(rule)
