@@ -35,6 +35,11 @@ def setup_style(root):
                     font=("맑은 고딕", 10, "bold"), padding=(18, 11))
     style.map("Primary.TButton", background=[("disabled", "#e4e7eb"), ("active", "#202630")],
               foreground=[("disabled", "#7f8da2"), ("!disabled", "white")])
+    style.configure("Nav.TButton", font=("맑은 고딕", 10, "bold"), padding=(14, 11))
+    style.configure("NavPrimary.TButton", background=BLUE, foreground="white", bordercolor=BLUE,
+                    font=("맑은 고딕", 10, "bold"), padding=(14, 11))
+    style.map("NavPrimary.TButton", background=[("disabled", "#e4e7eb"), ("active", "#202630")],
+              foreground=[("disabled", "#7f8da2"), ("!disabled", "white")])
     style.configure("TEntry", padding=8, fieldbackground="white", bordercolor="#dce3ee")
     style.configure("TCombobox", padding=6, fieldbackground="white", bordercolor="#dce3ee")
     style.configure("TLabelframe", background=BG, bordercolor="#dce3ee", relief="solid")

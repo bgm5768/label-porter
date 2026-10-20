@@ -98,7 +98,7 @@ def profile_connections(profile):
 
 class RuleReview:
     """Paired rows show only configured connections, with full JSON available on click."""
-    def __init__(self, parent, profile, on_continue, on_close, *, source_hint="", result_hints=(), configured=False):
+    def __init__(self, parent, profile, on_continue, on_close, *, source_hint="", result_hints=(), configured=False, external_navigation=False):
         self.profile = copy.deepcopy(validate_config(profile))
         self.rows = profile_connections(self.profile)
         self.on_continue, self.on_close = on_continue, on_close
@@ -110,7 +110,8 @@ class RuleReview:
         self.filter_kind = tk.StringVar(value="전체 연결")
         self.count = tk.StringVar()
         self.status = tk.StringVar(value="규칙과 선택한 한 쌍을 확인하는 화면입니다. 실제 저장 전 전체 입력을 검증하세요.")
-        footer = ttk.Frame(self.window, padding=(0, 10, 0, 0)); footer.pack(side="bottom", fill="x")
+        footer = ttk.Frame(self.window, padding=(0, 10, 0, 0))
+        if not external_navigation: footer.pack(side="bottom", fill="x")
         note = ttk.Label(footer, textvariable=self.status, wraplength=780, foreground=MUTED)
         note.pack(fill="x", pady=(0, 8))
         footer.bind("<Configure>", lambda e: note.configure(wraplength=max(280, e.width)))

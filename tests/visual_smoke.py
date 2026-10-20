@@ -20,7 +20,7 @@ def main():
     root = tk.Tk()
     errors = []
     root.report_callback_exception = lambda *args: errors.append(args)
-    output = Path('outputs/ui-v210')
+    output = Path('outputs/ui-v211')
     output.mkdir(parents=True, exist_ok=True)
     def wait(predicate):
         end = time.monotonic()+20
@@ -48,10 +48,10 @@ def main():
             root.geometry('1280x880+20+20'); root.update()
             capture('01-start')
             app._show_tools(0); root.update()
-            ImageGrab.grab(window=int(app.help_window.frame(), 16)).save(output/'00-guide.png')
+            capture('00-guide')
             app._show_tools(1); root.update()
-            ImageGrab.grab(window=int(app.help_window.frame(), 16)).save(output/'00-help.png')
-            app.help_window.withdraw()
+            capture('00-help')
+            app.back_button.invoke()
             assert app.current_step == 0
             profile = {'schema_version':1,'name':'문장 보완 프로젝트 · AI 규칙',
                        'source':{'key':'/id'},'result':{'key':'/ref'},
@@ -77,7 +77,7 @@ def main():
             root.geometry('1040x680+20+20'); root.update()
             capture('03-small-preview')
             root.geometry('1280x880+20+20'); root.update()
-            board.apply_button.invoke(); root.update()
+            app.primary_button.invoke(); root.update()
             assert app.current_step == 3, (app.status.get(), errors)
             app.primary_button.invoke(); wait(lambda:not app.running)
             assert app.preview_fingerprint

@@ -57,7 +57,11 @@ def self_test(output):
                 root.update(); time.sleep(.01)
             assert editor.preview.pair['key'] == 'test', editor.preview.status.get()
             assert editor.preview.configured
-            editor.apply_button.invoke()
+            app._show_tools(1); root.update()
+            assert app.route == 'help' and not hasattr(app, 'help_window')
+            app.back_button.invoke(); root.update()
+            assert app.mapping is editor and editor.preview.pair['key'] == 'test'
+            app.primary_button.invoke()
             root.update()
             assert app.current_step == 3 and app.connection_confirmed
             from label_porter.mapping import load_samples, preview_profile, import_profile, compile_profile
@@ -110,7 +114,7 @@ def self_test(output):
                                                 rebuild_profile, {})
             assert state == "updated" and rebuilt["items"] == [{"id": 1, "text": "new"}, {"id": 2, "text": "added"}]
         root.destroy()
-        Path(output).write_text(json.dumps({"ok": True, "tk": True, "profiles": 4, "engine": True, "original_preserved": True, "split_output": True, "date_sequence": True, "reusable_preview": True, "media_feature_removed": True, "ai_guide_bundled": True, "general_project_help": True, "four_step_workflow": True, "automatic_data_preview": True, "ai_rule_roundtrip": True, "multiple_sample_files": True, "per_file_identity": True, "ai_first_workflow": True, "readonly_field_review": True, "automatic_next_step": True}), encoding="utf-8")
+        Path(output).write_text(json.dumps({"ok": True, "tk": True, "profiles": 4, "engine": True, "original_preserved": True, "split_output": True, "date_sequence": True, "reusable_preview": True, "media_feature_removed": True, "ai_guide_bundled": True, "general_project_help": True, "inline_help": True, "shared_navigation": True, "four_step_workflow": True, "automatic_data_preview": True, "ai_rule_roundtrip": True, "multiple_sample_files": True, "per_file_identity": True, "ai_first_workflow": True, "readonly_field_review": True, "automatic_next_step": True}), encoding="utf-8")
         return 0
     except Exception:
         Path(output).write_text(json.dumps({"ok": False, "error": traceback.format_exc()}), encoding="utf-8")

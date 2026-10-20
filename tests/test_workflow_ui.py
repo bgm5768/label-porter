@@ -141,20 +141,48 @@ class WorkflowUiTests(unittest.TestCase):
             self.assertEqual(app.current_step, 2)
             self.boards.append(app.mapping)
 
-    def test_help_reuses_one_window_without_changing_workflow(self):
+    def test_inline_help_returns_to_exact_view_without_new_window(self):
         with patch.object(App, "_load_settings"), patch.object(App, "_save_settings"):
-            app = App(self.root); app._set_config(self.config()); app._advance_inputs()
-            help_window = app.help_window
-            app._show_tools(0); self.root.update()
-            app._show_tools(1); self.root.update()
-            self.assertIs(app.help_window, help_window)
+            app = App(self.root)
+            self.assertFalse(hasattr(app, 'help_window'))
+            self.assertEqual([w['text'] for w in app.toolbar.winfo_children()], ['JSON 뷰어'])
+            self.assertFalse(any(isinstance(w, tk.Toplevel) for w in self.root.winfo_children()))
+            app.help_button.invoke(); self.root.update()
+            self.assertEqual(app.route, 'help')
+            self.assertEqual(str(app.back_button['state']), 'normal')
+            app.back_button.invoke()
+            self.assertEqual(app.current_step, 0)
+            self.assertEqual(str(app.back_button['state']), 'disabled')
+            app._set_config(self.config()); self.configure_inputs(app); app._wizard()
+            board = app.mapping; self.boards.append(board)
+            self.until(lambda: board.preview.pair is not None)
+            board.pages.select(1); board.preview.views.select(1)
+            pair = board.preview.pair
+            before = (app.page_title.get(), app.page_caption.get(), app.status.get())
+            app._show_tools(0); app._show_tools(1); self.root.update()
+            self.assertEqual(app.route, 'help')
+            self.assertEqual(app.current_step, 2)
+            self.assertFalse(board.closed)
             self.assertEqual(app.tabs.index(app.tabs.select()), 1)
+            app.back_button.invoke(); self.root.update()
+            self.assertEqual(app.route, 'mapping')
+            self.assertIs(app.mapping, board)
+            self.assertIs(board.preview.pair, pair)
+            self.assertEqual(board.pages.index(board.pages.select()), 1)
+            self.assertEqual(board.preview.views.index(board.preview.views.select()), 1)
+            self.assertEqual((app.page_title.get(), app.page_caption.get(), app.status.get()), before)
+            app.primary_button.invoke()
+            self.assertEqual(app.current_step, 3)
+            app.primary_button.invoke(); self.until(lambda: not app.running)
+            fingerprint = app.preview_fingerprint
+            app.help_button.invoke(); app.back_button.invoke()
+            self.assertEqual(app.current_step, 3)
+            self.assertEqual(app.preview_fingerprint, fingerprint)
+            self.assertEqual(app.primary_button['text'], '복사본 저장')
+            app.help_button.invoke(); app._navigate(1)
+            self.assertEqual(app.route, 'workflow')
             self.assertEqual(app.current_step, 1)
-            self.assertEqual(len(app.tabs.tabs()), 2)
-            self.assertFalse(hasattr(app, 'editor'))
-            self.assertFalse(hasattr(app, '_new_project'))
-            self.assertFalse(hasattr(app, '_apply_json'))
-            app.help_window.withdraw()
+            self.assertEqual(app.source.get(), str(self.source))
 
     def test_no_unique_example_still_allows_full_validation_and_reports_missing_pairs(self):
         with patch.object(App, "_load_settings"), patch.object(App, "_save_settings"):
@@ -219,13 +247,37 @@ class WorkflowUiTests(unittest.TestCase):
             app._wizard(); board = app.mapping; self.boards.append(board)
             self.root.update()
             self.assertGreater(board.canvas.winfo_height(), 70)
-            self.assertLessEqual(board.apply_button.winfo_rooty()+board.apply_button.winfo_height(), self.root.winfo_rooty()+self.root.winfo_height())
+            self.assertFalse(board.apply_button.winfo_ismapped())
+            self.assertTrue(app.primary_button.winfo_ismapped())
+            self.assertEqual(app.primary_button.winfo_height(), app.back_button.winfo_height())
+            self.assertEqual(app.primary_button.winfo_width(), app.back_button.winfo_width())
+            self.assertLessEqual(app.primary_button.winfo_rooty()+app.primary_button.winfo_height(), self.root.winfo_rooty()+self.root.winfo_height())
             for item in board.canvas.find_all():
                 self.assertLessEqual(board.canvas.bbox(item)[2], board.canvas.winfo_width()+2)
             self.assertFalse(board.canvas.bind('<B1-Motion>'))
             self.assertFalse(board.canvas.bind('<Delete>'))
             board._close(); self.root.update()
             self.assertEqual(app.route, 'workflow')
+
+    def test_navigation_positions_and_names_stay_consistent_across_steps(self):
+        with patch.object(App, '_load_settings'), patch.object(App, '_save_settings'):
+            app = App(self.root); self.root.geometry('1040x680'); self.root.deiconify()
+            app._set_config(self.config()); self.configure_inputs(app)
+            rectangles = []
+            for index in (0, 1, 2):
+                app._navigate(index); self.root.update()
+                rectangles.append(tuple((b.winfo_x(), b.winfo_rooty(), b.winfo_width(), b.winfo_height()) for b in (app.back_button, app.primary_button)))
+                self.assertEqual(app.primary_button['text'], '다음 단계 →')
+                self.assertEqual(app.back_button['text'], '← 이전 단계')
+            self.assertEqual(rectangles[0], rectangles[1])
+            self.assertEqual(rectangles[1], rectangles[2])
+            self.boards.append(app.mapping)
+            before = app.back_button.winfo_rootx()
+            app.help_button.invoke(); self.root.update()
+            self.assertEqual(app.back_button.winfo_rootx(), before)
+            app.back_button.invoke(); app.primary_button.invoke(); self.root.update()
+            self.assertEqual(app.current_step, 3)
+            self.assertEqual(app.primary_button['text'], '전체 데이터 검증')
 
     def test_import_replaces_project_inputs_but_invalid_import_preserves_them(self):
         with patch.object(App, '_load_settings'), patch.object(App, '_save_settings'):

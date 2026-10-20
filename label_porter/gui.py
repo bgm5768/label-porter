@@ -36,6 +36,7 @@ class App(Workflow):
         self.last_run = self.last_summary = None
         self.result_paths = []
         self.current_step, self.route = 0, "workflow"
+        self.help_return = None
         self.source, self.output = tk.StringVar(), tk.StringVar()
         self.split_output = tk.BooleanVar(value=True)
         self.status = tk.StringVar(value="규칙 JSON 파일을 불러오면 입력·저장 위치 선택으로 이동합니다.")
@@ -61,14 +62,8 @@ class App(Workflow):
     def _build(self):
         self.toolbar = ttk.Frame(self.root, style="Toolbar.TFrame", padding=(16, 8))
         self.toolbar.pack(side="top", fill="x")
-        self.toolbar_buttons = []
-        for label, command in (("AI 규칙 작성 가이드", lambda: self._show_tools(0)),
-                               ("사용 방법", lambda: self._show_tools(1))):
-            button = ttk.Button(self.toolbar, text=label, command=command, style="Toolbar.TButton")
-            button.pack(side="left", padx=(0, 6))
-            self.toolbar_buttons.append(button)
-        ttk.Button(self.toolbar, text="JSON 뷰어", command=self._json_viewer, style="Toolbar.TButton").pack(side="left", padx=6)
-        ttk.Label(self.toolbar, text="로컬 작업 공간  ·  원본 보존", style="Toolbar.TLabel").pack(side="right", padx=8)
+        self.viewer_button = ttk.Button(self.toolbar, text="JSON 뷰어", command=self._json_viewer, style="Toolbar.TButton")
+        self.viewer_button.pack(side="left")
         ttk.Separator(self.root).pack(side="top", fill="x")
         workspace = ttk.Frame(self.root)
         workspace.pack(fill="both", expand=True)
@@ -86,6 +81,10 @@ class App(Workflow):
             b.pack(fill="x", padx=10, pady=3)
             self.nav_buttons.append(b)
         tk.Label(sidebar, text=f"원본 보존 · 누락 항목 유지\n\nv{__version__}", justify="left", bg="#edf0f4", fg=MUTED, font=("맑은 고딕", 9)).pack(side="bottom", anchor="w", padx=22, pady=24)
+        self.help_button = tk.Button(sidebar, text="사용 방법", anchor="w", padx=12, pady=12, bd=0,
+                                     bg="#edf0f4", fg=MUTED, activebackground="#e0e5ec", activeforeground=INK,
+                                     font=("맑은 고딕", 11), command=lambda: self._show_tools(1))
+        self.help_button.pack(side="bottom", fill="x", padx=10, pady=(0, 10))
         shell = ttk.Frame(workspace, padding=(28, 24, 28, 16))
         shell.pack(side="left", fill="both", expand=True)
         self.page_title, self.page_caption = tk.StringVar(), tk.StringVar()
@@ -96,16 +95,23 @@ class App(Workflow):
         # Allocate navigation first so it stays visible at small window sizes and high DPI.
         self.footer = ttk.Frame(shell, padding=(0, 12, 0, 0))
         self.footer.pack(side="bottom", fill="x")
-        status = ttk.Label(self.footer, textvariable=self.status, wraplength=800, style="Muted.TLabel")
-        status.pack(fill="x", pady=(0, 10))
-        self.footer.bind("<Configure>", lambda e: status.configure(wraplength=max(300, e.width)))
+        ttk.Separator(self.footer).pack(fill="x", pady=(0, 10))
+        self.step_indicator = tk.StringVar()
+        status_row = ttk.Frame(self.footer); status_row.pack(fill="x", pady=(0, 10))
+        ttk.Label(status_row, textvariable=self.step_indicator, style="Muted.TLabel").pack(side="right", padx=(12, 0))
+        status = ttk.Label(status_row, textvariable=self.status, wraplength=700, style="Muted.TLabel")
+        status.pack(side="left", fill="x", expand=True)
+        self.footer.bind("<Configure>", lambda e: status.configure(wraplength=max(280, e.width-100)))
         actions = ttk.Frame(self.footer)
         self.footer_actions = actions
         actions.pack(fill="x")
-        self.back_button = ttk.Button(actions, command=self._back)
-        self.back_button.pack(side="left")
-        self.primary_button = ttk.Button(actions, style="Primary.TButton", command=self._primary)
-        self.primary_button.pack(side="right")
+        self.navigation = ttk.Frame(actions)
+        self.navigation.pack(side="right")
+        self.back_button = ttk.Button(self.navigation, command=self._back, style="Nav.TButton", width=20)
+        self.back_button.grid(row=0, column=0, padx=(0, 8))
+        self.primary_button = ttk.Button(self.navigation, style="NavPrimary.TButton", command=self._primary, width=20)
+        self.primary_button.grid(row=0, column=1)
+        self.navigation.columnconfigure(1, minsize=self.primary_button.winfo_reqwidth())
         self.cancel_button = ttk.Button(actions, text="작업 중단", command=self._cancel, state="disabled")
         self.cancel_button.pack(side="right", padx=8)
         self.content = ttk.Frame(shell)
@@ -132,7 +138,7 @@ class App(Workflow):
                                    ("04  전체 검증과 저장", "전체 처리 결과서를 확인한 뒤 원본을 보존하는 복사본을 저장합니다.")):
             ttk.Label(group, text=title, style="CardTitle.TLabel").pack(anchor="w", pady=(10, 3))
             ttk.Label(group, text=explanation, style="CardMuted.TLabel", wraplength=700).pack(fill="x")
-        ttk.Label(project, text="규칙 작성이 필요하면 상단 ‘AI 규칙 작성 가이드’를 이용하세요. 불러온 규칙은 읽기 전용으로 확인합니다.", style="Muted.TLabel", wraplength=720).pack(fill="x", pady=4)
+        ttk.Label(project, text="규칙 작성이 필요하면 왼쪽 아래 ‘사용 방법 → AI 규칙 작성 가이드’를 이용하세요. 불러온 규칙은 읽기 전용으로 확인합니다.", style="Muted.TLabel", wraplength=720).pack(fill="x", pady=4)
         ttk.Label(inputs, textvariable=self.input_hint, wraplength=760, foreground="#245eb7").pack(fill="x", pady=(0, 14))
         group = card(inputs, "1. 보완 전 원본 라벨 폴더", "여러 개별 JSON 또는 여러 건을 담은 통합 JSON 모두 가능합니다. 하위 폴더도 포함합니다.")
         self._path_row(group, self.source, self._choose_source)
@@ -175,14 +181,8 @@ class App(Workflow):
         self.log = scrolledtext.ScrolledText(review, wrap="word", height=5, font=("맑은 고딕", 9), state="disabled", relief="flat", foreground=MUTED)
         self.log.pack(fill="x", pady=(6, 0))
         self.mapping_host = ttk.Frame(self.content)
-        # One reusable help window keeps documentation out of the workflow pages.
-        self.help_window = tk.Toplevel(self.root)
-        self.help_window.withdraw()
-        self.help_window.title("라벨 포터 · 도움말")
-        self.help_window.geometry("920x740")
-        self.help_window.transient(self.root)
-        self.help_window.protocol("WM_DELETE_WINDOW", self.help_window.withdraw)
-        self.tabs = ttk.Notebook(self.help_window); self.tabs.pack(fill="both", expand=True, padx=16, pady=16)
+        self.help_host = ttk.Frame(self.content)
+        self.tabs = ttk.Notebook(self.help_host); self.tabs.pack(fill="both", expand=True)
         ai, help_page = [ttk.Frame(self.tabs, padding=12) for _ in range(2)]
         self.tabs.add(ai, text="AI 규칙 작성 가이드"); self.tabs.add(help_page, text="사용 방법")
         row = ttk.Frame(ai); row.pack(fill="x", pady=(0, 12))
@@ -222,6 +222,7 @@ class App(Workflow):
             return
         self._close_mapping()
         self.route, self.current_step = "workflow", index
+        self.help_host.pack_forget(); self.help_return = None
         self.mapping_host.pack_forget()
         self.steps.pack(fill="both", expand=True); self.steps.tab(index, state="normal"); self.steps.select(index)
         self.footer.pack(side="bottom", fill="x", before=self.content)
@@ -232,22 +233,26 @@ class App(Workflow):
         self._sync_actions()
 
     def _sync_actions(self):
-        self.back_button.configure(text="이전 단계", state="disabled" if self.running or self.current_step == 0 else "normal")
+        helping = self.route == "help"
+        self.back_button.configure(text="← 작업으로 돌아가기" if helping else "← 이전 단계",
+                                   state="disabled" if self.running or (self.current_step == 0 and not helping) else "normal")
         self.cancel_button.configure(state="normal" if self.running and not self.cancel_event.is_set() else "disabled")
-        for button in (self.primary_button, self.cancel_button, self.report_button, self.folder_button):
-            button.pack_forget()
-        for i, b in enumerate(self.nav_buttons):
-            b.configure(state="disabled" if self.running or (i > 0 and not self.rule_ready) else "normal",
-                        bg="#dfe5ed" if i == self.current_step else "#edf0f4", fg=INK if i == self.current_step else MUTED)
-        for b in self.toolbar_buttons: b.configure(state="disabled" if self.running else "normal")
-        if self.route != "workflow": return
-        self.primary_button.pack(side="right")
-        if self.running: self.cancel_button.pack(side="right", padx=8)
+        for button in (self.cancel_button, self.report_button, self.folder_button): button.pack_forget()
+        for i, button in enumerate(self.nav_buttons):
+            active = i == self.current_step and not helping
+            button.configure(state="disabled" if self.running or (i > 0 and not self.rule_ready) else "normal",
+                             bg="#dfe5ed" if active else "#edf0f4", fg=INK if active else MUTED)
+        self.help_button.configure(state="disabled" if self.running else "normal", bg="#dfe5ed" if helping else "#edf0f4", fg=INK if helping else MUTED)
+        self.step_indicator.set("도움말" if helping else f"{self.current_step + 1} / 4 단계")
+        if helping:
+            self.primary_button.grid_remove()
+            return
+        self.primary_button.grid()
+        if self.running: self.cancel_button.pack(side="left", padx=(0, 8))
         if self.current_step == self.review_step:
-            self.report_button.pack(side="left", padx=8); self.folder_button.pack(side="left")
-        title = ("입력 데이터 선택 →", "필드 연결·프리뷰 확인 →", "전체 검증으로 →",
-                 "복사본 저장" if self.preview_fingerprint else "전체 데이터 검증")[self.current_step]
-        if self.current_step == self.review_step and self._saved(): title = "저장 완료 · 결과 폴더 열기"
+            self.report_button.pack(side="left", padx=(0, 8)); self.folder_button.pack(side="left")
+        title = "다음 단계 →" if self.current_step < self.review_step else "복사본 저장" if self.preview_fingerprint else "전체 데이터 검증"
+        if self.current_step == self.review_step and self._saved(): title = "결과 폴더 열기"
         self.primary_button.configure(text=title, state="normal" if not self.running and self.rule_ready else "disabled")
 
     def _saved(self):
@@ -255,6 +260,8 @@ class App(Workflow):
 
     def _navigate(self, index):
         if self.running: return
+        if self.route == "help": self._return_from_help()
+        if index == self.current_step and (index != self.review_step or self.connection_confirmed): return
         if index == 0: self._show_step(0)
         elif index == 1: self._advance_inputs()
         elif index == 2: self._wizard()
@@ -263,18 +270,39 @@ class App(Workflow):
         else: self._advance_review()
 
     def _primary(self):
+        if self.running or self.route == "help": return
         if self.current_step == 0: self._advance_inputs()
         elif self.current_step == 1: self._wizard()
+        elif self.current_step == 2 and self.mapping: self.mapping._apply()
         elif self._saved(): self._open_folder()
         else: self._start(self.preview_fingerprint is None)
 
     def _back(self):
         if self.running: return
-        self._show_step(max(0, self.current_step - 1))
+        if self.route == "help": self._return_from_help()
+        else: self._show_step(max(0, self.current_step - 1))
 
-    def _show_tools(self, tab):
+    def _show_tools(self, tab=1):
+        if self.running: return
+        if self.route != "help":
+            self.help_return = (self.route, self.page_title.get(), self.page_caption.get(), self.status.get())
+        self.steps.pack_forget(); self.mapping_host.pack_forget()
+        self.help_host.pack(fill="both", expand=True)
+        self.route = "help"
         self.tabs.select(tab)
-        self.help_window.deiconify(); self.help_window.lift()
+        self.page_title.set("사용 방법")
+        self.page_caption.set("진행 순서와 AI 규칙 작성 가이드를 확인하세요. 돌아가면 보던 단계에서 계속할 수 있습니다.")
+        self.status.set("작업의 입력값과 프리뷰 상태를 유지하고 있습니다.")
+        self._sync_actions()
+
+    def _return_from_help(self):
+        if self.route != "help" or not self.help_return: return
+        self.help_host.pack_forget()
+        self.route, title, caption, status = self.help_return
+        self.help_return = None
+        (self.mapping_host if self.route == "mapping" else self.steps).pack(fill="both", expand=True)
+        self.page_title.set(title); self.page_caption.set(caption); self.status.set(status)
+        self._sync_actions()
 
     def _set_config(self, config):
         config = validate_config(config)
@@ -372,10 +400,11 @@ class App(Workflow):
         self.mapping_host.pack(fill="both", expand=True)
         self.page_title.set("필드 연결과 실제 값 확인")
         self.page_caption.set("선택한 데이터에서 KEY가 같은 예시를 자동으로 불러옵니다. 규칙과 원본은 수정하지 않습니다.")
-        self._sync_actions(); self.footer.pack_forget()
+        self.status.set("필드 연결과 적용 후 예시를 확인한 뒤 다음 단계에서 전체 데이터를 검증하세요.")
+        self._sync_actions()
         self.mapping = RuleReview(self.mapping_host, config, self._finish_mapping,
                                   lambda: self._show_step(1), source_hint=self.source.get(),
-                                  result_hints=self.result_paths, configured=True)
+                                  result_hints=self.result_paths, configured=True, external_navigation=True)
 
     def _finish_mapping(self):
         self.mapping = None
