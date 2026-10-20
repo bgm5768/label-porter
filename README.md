@@ -1,6 +1,6 @@
 # 라벨 포터
 
-**버전 관리 기준: v1 (2026-10-20)** — 프로그램 2.4.0을 첫 Git 기준 버전으로 보관합니다. `v1` 태그로 이 상태를 다시 확인할 수 있습니다. 현재 프로그램은 **2.15.0**이며 변경 내역은 [CHANGELOG.md](CHANGELOG.md)에 기록합니다.
+**버전 관리 기준: v1 (2026-10-20)** — 프로그램 2.4.0을 첫 Git 기준 버전으로 보관합니다. `v1` 태그로 이 상태를 다시 확인할 수 있습니다. 현재 프로그램은 **2.16.0**이며 변경 내역은 [CHANGELOG.md](CHANGELOG.md)에 기록합니다.
 
 플랫폼 DB에 접근하지 않고, 어드민에서 내려받은 작업 결과를 원본 라벨링 JSON에 반영하는 Windows 데스크톱 프로그램입니다. 모든 데이터 처리는 로컬에서 이루어집니다. 외부 서비스나 AI 호출이 없습니다.
 
@@ -18,12 +18,23 @@
 
 ## 실행
 
-- Windows 실행 파일: `dist/v2.15/LabelPorter.exe`를 더블클릭합니다. Python 설치가 필요하지 않습니다.
+- Windows 실행 파일: `dist/v2.16/LabelPorter.exe`를 더블클릭합니다. Python 설치가 필요하지 않습니다.
 - 소스 실행: Python 3.11 이상에서 `python -m label_porter` 또는 `start.cmd`를 실행합니다. 먼저 `python -m pip install -r requirements.txt`로 문서 뷰어 의존성을 설치합니다. Windows 공식 Python의 Tkinter를 사용합니다. 실행 파일에는 문서 뷰어가 내장되어 별도 설치가 필요 없습니다.
 - 상세 규칙 설명: [사용설명.md](사용설명.md)
 - 후처리 가능 수준과 제한: [후처리_지원범위.md](후처리_지원범위.md) — 프로그램의 사용 방법 화면에도 포함됩니다.
 
 ## 화면에서 사용하기
+
+**같은 구조의 JSON이면 ‘데이터로 규칙 만들기’를 사용할 수 있습니다.** 원본 폴더와 보완 파일을 선택 → 전체 입력에서 연결 기준 확인 → 반영할 항목 체크 → 검색·페이지별 실제 전후 확인 → 규칙 생성 → 기존 전체 검증·저장으로 이어집니다. AI나 별도 네트워크 연결이 필요하지 않습니다. 생성한 규칙은 ‘규칙 내보내기’로 저장할 수 있습니다.
+
+- JSON / JSONL / NDJSON, 개별 파일·통합 배열·일반적인 records/rows/items/data 래퍼를 지원합니다. 원본 폴더의 JSON 계열 확장자는 한 종류씩 선택합니다.
+- 연결 기준의 누락·중복·연결 수는 전체 입력을 검사합니다. 항목 목록과 변경 예시는 앞 200개 연결 쌍에서 확인한 공통 필드를 사용합니다. ID로 보이는 필드가 없으면 사용자가 연결 기준을 선택해야 합니다.
+- 추천 항목을 먼저 표시하고 ‘다른 항목도 보기’ 또는 검색으로 표본의 다른 공통 항목을 찾습니다. 선택하지 않은 값은 원본 유지입니다.
+- 선택한 목록은 순서·ID·추가·삭제·빈 목록·내부 추가 필드까지 보완본 그대로 반영합니다. 시간 반올림, ID 재부여, 전사 재생성, 태그 참조 검사를 자동 추가하지 않습니다. 어절의 음수·역전 시간 검사는 선택할 수 있습니다.
+- 단계·도움말 이동과 생성 후 필드 연결 프리뷰에 읽은 데이터를 재사용합니다. 외부 파일 변경은 ‘데이터 새로 읽기’, 최종 저장 전에는 전체 검증을 사용합니다.
+- 플랫폼 전용 구조, 서로 다른 필드명, 복잡한 조건·변환, 모호한 레코드 위치는 아래 AI 규칙 경로를 사용합니다. 전체 결과를 저장하기 전에 처리 결과서를 확인하세요.
+
+**AI 규칙 파일을 사용하는 방법:**
 
 1. 왼쪽 아래 **사용 방법 → AI 규칙 작성 가이드**에서 MD를 저장하거나 복사해 원본·플랫폼/보완 데이터와 함께 AI에게 전달합니다.
 2. **규칙 파일 불러오기**로 `project_profile.json`을 엽니다. 곧바로 입력 단계로 이동합니다.
@@ -135,8 +146,8 @@ Windows 단일 실행 파일 빌드:
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt pyinstaller==6.22.3
-.\.venv\Scripts\python.exe -m PyInstaller --noconfirm --clean --distpath 'dist\v2.15' --workpath 'build\v2.15' LabelPorter.spec
-Copy-Item -LiteralPath '사용설명.md','AI_규칙작성_가이드.md','후처리_지원범위.md','THIRD_PARTY_NOTICES.txt' -Destination 'dist\v2.15'
+.\.venv\Scripts\python.exe -m PyInstaller --noconfirm --clean --distpath 'dist\v2.16' --workpath 'build\v2.16' LabelPorter.spec
+Copy-Item -LiteralPath '사용설명.md','AI_규칙작성_가이드.md','후처리_지원범위.md','THIRD_PARTY_NOTICES.txt' -Destination 'dist\v2.16'
 ```
 
 ## 저장소에 포함하는 파일

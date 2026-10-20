@@ -125,8 +125,33 @@ def self_test(output):
                                                 {"items": [{"id": 99, "text": "new"}, {"id": 100, "text": "added"}]},
                                                 rebuild_profile, {})
             assert state == "updated" and rebuilt["items"] == [{"id": 1, "text": "new"}, {"id": 2, "text": "added"}]
+            # Exercise the bundled optional builder and its cached preview handoff.
+            easy_result = base / "easy.json"
+            easy_result.write_text(json.dumps([{"id": "test", "label": "easy", "metadata": {"keep": False}}]), encoding="utf-8")
+            app._show_step(0); app._show_builder()
+            builder = app.builder
+            builder.source.set(str(source)); builder.results = [str(easy_result)]; builder._render_results()
+            builder.next()
+            deadline = time.monotonic() + 10
+            while builder.data is None and time.monotonic() < deadline:
+                root.update(); time.sleep(.01)
+            assert builder.data is not None, builder.status.get()
+            assert builder.selected == {"/label"}
+            builder.next()
+            deadline = time.monotonic() + 10
+            while builder.preview.pair is None and time.monotonic() < deadline:
+                root.update(); time.sleep(.01)
+            assert builder.preview.pair is not None
+            remembered = builder.preview.cache
+            builder.next()
+            deadline = time.monotonic() + 10
+            while app.mapping.preview.cache is None and time.monotonic() < deadline:
+                root.update(); time.sleep(.01)
+            assert app.mapping.preview.cache is remembered
+            assert app._get_config()["source"]["key"] == "/id"
+            app._close_mapping(); app._close_builder()
         root.destroy()
-        Path(output).write_text(json.dumps({"ok": True, "tk": True, "profiles": 4, "engine": True, "original_preserved": True, "split_output": True, "date_sequence": True, "reusable_preview": True, "media_feature_removed": True, "ai_guide_bundled": True, "general_project_help": True, "inline_help": True, "shared_navigation": True, "four_step_workflow": True, "automatic_data_preview": True, "ai_rule_roundtrip": True, "multiple_sample_files": True, "per_file_identity": True, "ai_first_workflow": True, "readonly_field_review": True, "automatic_next_step": True}), encoding="utf-8")
+        Path(output).write_text(json.dumps({"ok": True, "tk": True, "profiles": 4, "engine": True, "original_preserved": True, "split_output": True, "date_sequence": True, "reusable_preview": True, "media_feature_removed": True, "ai_guide_bundled": True, "general_project_help": True, "inline_help": True, "shared_navigation": True, "four_step_workflow": True, "automatic_data_preview": True, "ai_rule_roundtrip": True, "multiple_sample_files": True, "per_file_identity": True, "ai_first_workflow": True, "readonly_field_review": True, "automatic_next_step": True, "easy_rules": True}), encoding="utf-8")
         return 0
     except Exception:
         Path(output).write_text(json.dumps({"ok": False, "error": traceback.format_exc()}), encoding="utf-8")

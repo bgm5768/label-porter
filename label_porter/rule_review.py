@@ -98,7 +98,7 @@ def profile_connections(profile):
 
 class RuleReview:
     """Paired rows show only configured connections, with full JSON available on click."""
-    def __init__(self, parent, profile, on_continue, on_close, *, source_hint="", result_hints=(), configured=False, external_navigation=False):
+    def __init__(self, parent, profile, on_continue, on_close, *, source_hint="", result_hints=(), configured=False, external_navigation=False, preloaded=None):
         self.profile = copy.deepcopy(validate_config(profile))
         self.rows = profile_connections(self.profile)
         self.on_continue, self.on_close = on_continue, on_close
@@ -150,7 +150,7 @@ class RuleReview:
         self.canvas.bind("<MouseWheel>", lambda e: self.canvas.yview_scroll(-1 if e.delta > 0 else 1, "units"))
         self.query.trace_add("write", self._filter)
         self.filter_kind.trace_add("write", self._filter)
-        self.preview = PairPreview(preview, self.profile, source_hint, result_hints, configured=configured)
+        self.preview = PairPreview(preview, self.profile, source_hint, result_hints, configured=configured, preloaded=preloaded)
         self.preview.pack(fill="both", expand=True)
         self.raw_box = self._box(raw); self._text(self.raw_box, json_text(self.profile))
         self._draw()

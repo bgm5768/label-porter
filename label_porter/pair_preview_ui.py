@@ -14,7 +14,7 @@ from .ui import BG, INK, MUTED
 
 
 class PairPreview(ttk.Frame):
-    def __init__(self, parent, profile, source_hint="", result_hints=(), *, configured=False):
+    def __init__(self, parent, profile, source_hint="", result_hints=(), *, configured=False, preloaded=None):
         super().__init__(parent)
         self.configured, self.example_index = configured, 0
         self.auto_job = None
@@ -53,7 +53,10 @@ class PairPreview(ttk.Frame):
         self.root_path.trace_add("write", lambda *_: self._invalidate())
         self.number.trace_add("write", lambda *_: self._invalidate(cache=False))
         self.poll_job = self.after(80, self._poll)
-        if configured:
+        if preloaded is not None:
+            self.queue.put((self.generation, "loaded", preloaded))
+            self.queue.put((self.generation, "ready", None))
+        elif configured:
             self.auto_job = self.after_idle(self._autoload)
 
     def _autoload(self):

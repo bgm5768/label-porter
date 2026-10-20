@@ -33,6 +33,8 @@ class App(Workflow):
         self.review_step = 3
         self.connection_confirmed = False
         self.mapping = None
+        self.builder = None
+        self.preloaded_preview = None
         self.last_run = self.last_summary = None
         self.result_paths = []
         self.current_step, self.route = 0, "workflow"
@@ -40,7 +42,7 @@ class App(Workflow):
         self.source, self.output = tk.StringVar(), tk.StringVar(value=str(default_output_directory()))
         self.output_mode = "default"
         self.split_output = tk.BooleanVar(value=True)
-        self.status = tk.StringVar(value="규칙 JSON 파일을 불러오면 입력·저장 위치 선택으로 이동합니다.")
+        self.status = tk.StringVar(value="규칙 파일을 불러오거나 데이터로 규칙 만들기를 선택하세요.")
         self.rule_file = tk.StringVar(value="아직 불러온 파일이 없습니다.")
         self.rule_summary = tk.StringVar(value="아직 프로젝트 규칙이 없습니다.")
         self.rule_title = tk.StringVar(value="규칙을 준비해 주세요")
@@ -77,7 +79,7 @@ class App(Workflow):
         tk.Label(sidebar, text="라벨 포터", bg="#edf0f4", fg=INK, font=("맑은 고딕", 19, "bold")).pack(anchor="w", padx=22, pady=(28, 4))
         tk.Label(sidebar, text="규칙 → 데이터 → 확인 → 저장", bg="#edf0f4", fg=MUTED, font=("맑은 고딕", 9)).pack(anchor="w", padx=22, pady=(0, 30))
         self.nav_buttons = []
-        for i, title in enumerate(("1   규칙 불러오기", "2   입력·저장 위치", "3   필드 연결 확인", "4   검증·복사본 저장")):
+        for i, title in enumerate(("1   규칙 준비", "2   입력·저장 위치", "3   필드 연결 확인", "4   검증·복사본 저장")):
             b = tk.Button(sidebar, text=title, anchor="w", padx=12, pady=16, bd=0,
                           bg="#edf0f4", fg=MUTED, activebackground="#e0e5ec", activeforeground=INK,
                           font=("맑은 고딕", 11, "bold"), command=lambda i=i: self._navigate(i))
@@ -125,12 +127,14 @@ class App(Workflow):
         for i, page in enumerate(self.step_pages):
             self.steps.add(page, text=str(i+1), state="normal" if i == 0 else "disabled")
         project, inputs, _, review = [p.body for p in self.step_pages]
-        group = card(project, "프로젝트 규칙", "AI가 만든 규칙 JSON 파일을 불러오세요. 다음 단계에서 실제 처리할 데이터와 저장 위치를 선택합니다.")
+        group = card(project, "프로젝트 규칙", "저장된 규칙을 불러오거나, 원본과 보완 데이터를 넣고 반영할 내용만 선택해 규칙을 만드세요.")
         row = ttk.Frame(group, style="Card.TFrame"); row.pack(fill="x", pady=(2, 12))
         self.import_rule_button = ttk.Button(row, text="규칙 파일 불러오기…", command=self._load_profile, style="Primary.TButton")
         self.import_rule_button.pack(side="left")
+        self.create_rule_button = ttk.Button(row, text="데이터로 규칙 만들기", command=self._show_builder)
+        self.create_rule_button.pack(side="left", padx=(10, 0))
         ttk.Label(group, textvariable=self.rule_file, style="CardMuted.TLabel", wraplength=700).pack(fill="x")
-        group = card(project, "불러온 규칙")
+        group = card(project, "현재 규칙")
         ttk.Label(group, textvariable=self.rule_title, style="CardTitle.TLabel").pack(anchor="w", pady=(8, 8))
         ttk.Label(group, textvariable=self.rule_summary, style="CardMuted.TLabel", wraplength=720).pack(fill="x")
         self.save_rule_button = ttk.Button(group, text="규칙 내보내기", command=self._save_profile, state="disabled")
@@ -186,6 +190,7 @@ class App(Workflow):
         self.log = scrolledtext.ScrolledText(review, wrap="word", height=5, font=("맑은 고딕", 9), state="disabled", relief="flat", foreground=MUTED)
         self.log.pack(fill="x", pady=(6, 0))
         self.mapping_host = ttk.Frame(self.content)
+        self.builder_host = ttk.Frame(self.content)
         self.help_host = ttk.Frame(self.content)
         self.tabs = ttk.Notebook(self.help_host); self.tabs.pack(fill="both", expand=True)
         ai, help_page, capabilities = [ttk.Frame(self.tabs, padding=12) for _ in range(3)]
@@ -208,8 +213,10 @@ class App(Workflow):
 
     def _json_viewer(self):
         from .json_viewer import JsonViewer
-        selected = self.result_list.curselection()
-        initial = self.result_paths[selected[0] if selected else 0] if self.result_paths else None
+        builder = self.builder if self.route == "builder" else None
+        selected = (builder.result_list if builder else self.result_list).curselection()
+        paths = builder.results if builder else self.result_paths
+        initial = paths[selected[0] if selected and selected[0] < len(paths) else 0] if paths else None
         JsonViewer(self.root, initial)
 
     @staticmethod
@@ -230,15 +237,29 @@ class App(Workflow):
         self.route, self.current_step = "workflow", index
         self.help_host.pack_forget(); self.help_return = None
         self.mapping_host.pack_forget()
+        self.builder_host.pack_forget()
         self.steps.pack(fill="both", expand=True); self.steps.tab(index, state="normal"); self.steps.select(index)
         self.footer.pack(side="bottom", fill="x", before=self.content)
-        self.page_title.set(("프로젝트 규칙 불러오기", "입력 데이터와 저장 위치", "필드 연결 확인", "전체 검증과 복사본 저장")[index])
-        self.page_caption.set(("규칙 파일을 불러오면 데이터 선택 단계로 이어집니다.",
+        self.page_title.set(("프로젝트 규칙 준비", "입력 데이터와 저장 위치", "필드 연결 확인", "전체 검증과 복사본 저장")[index])
+        self.page_caption.set(("규칙 파일 불러오기 또는 데이터로 규칙 만들기 중 편한 방법을 선택하세요.",
                                "여기서 선택한 데이터를 다음 단계의 프리뷰와 전체 처리에 함께 사용합니다.", "",
                                "전체 데이터를 검증하고 처리 결과서를 확인한 뒤 복사본을 저장하세요.")[index])
         self._sync_actions()
 
     def _sync_actions(self):
+        if self.route == "builder" and self.builder:
+            builder = self.builder
+            self.back_button.configure(text="← 규칙 준비로" if builder.stage == 0 else "← 이전 단계",
+                                       state="disabled" if builder.busy else "normal")
+            self.primary_button.grid()
+            self.primary_button.configure(text=builder.next_title, state="normal" if builder.can_next else "disabled")
+            for button in (self.cancel_button, self.report_button, self.folder_button): button.pack_forget()
+            for i, button in enumerate(self.nav_buttons):
+                button.configure(state="normal" if i == 0 and not builder.busy else "disabled",
+                                 bg="#dfe5ed" if i == 0 else "#edf0f4", fg=INK if i == 0 else MUTED)
+            self.help_button.configure(state="normal", bg="#edf0f4", fg=MUTED)
+            self.step_indicator.set(f"규칙 만들기 · {builder.stage + 1} / 3")
+            return
         helping = self.route == "help"
         self.back_button.configure(text="← 작업으로 돌아가기" if helping else "← 이전 단계",
                                    state="disabled" if self.running or (self.current_step == 0 and not helping) else "normal")
@@ -267,7 +288,7 @@ class App(Workflow):
     def _navigate(self, index):
         if self.running: return
         if self.route == "help": self._return_from_help()
-        if index == self.current_step and (index != self.review_step or self.connection_confirmed): return
+        if self.route != "builder" and index == self.current_step and (index != self.review_step or self.connection_confirmed): return
         if index == 0: self._show_step(0)
         elif index == 1: self._advance_inputs()
         elif index == 2: self._wizard()
@@ -277,6 +298,8 @@ class App(Workflow):
 
     def _primary(self):
         if self.running or self.route == "help": return
+        if self.route == "builder":
+            self.builder.next(); return
         if self.current_step == 0: self._advance_inputs()
         elif self.current_step == 1: self._wizard()
         elif self.current_step == 2 and self.mapping: self.mapping._apply()
@@ -286,13 +309,14 @@ class App(Workflow):
     def _back(self):
         if self.running: return
         if self.route == "help": self._return_from_help()
+        elif self.route == "builder": self.builder.back()
         else: self._show_step(max(0, self.current_step - 1))
 
     def _show_tools(self, tab=1):
         if self.running: return
         if self.route != "help":
             self.help_return = (self.route, self.page_title.get(), self.page_caption.get(), self.status.get())
-        self.steps.pack_forget(); self.mapping_host.pack_forget()
+        self.steps.pack_forget(); self.mapping_host.pack_forget(); self.builder_host.pack_forget()
         self.help_host.pack(fill="both", expand=True)
         self.route = "help"
         self.tabs.select(tab)
@@ -306,9 +330,45 @@ class App(Workflow):
         self.help_host.pack_forget()
         self.route, title, caption, status = self.help_return
         self.help_return = None
-        (self.mapping_host if self.route == "mapping" else self.steps).pack(fill="both", expand=True)
+        (self.builder_host if self.route == "builder" else self.mapping_host if self.route == "mapping" else self.steps).pack(fill="both", expand=True)
         self.page_title.set(title); self.page_caption.set(caption); self.status.set(status)
         self._sync_actions()
+        if self.route == "builder": self._builder_changed()
+
+    def _show_builder(self):
+        if self.running: return
+        from .easy_rules_ui import EasyRules
+        self.steps.pack_forget(); self.mapping_host.pack_forget(); self.help_host.pack_forget()
+        self.route, self.current_step = "builder", 0
+        if self.builder is None:
+            self.builder = EasyRules(self.builder_host, self._builder_changed, self._finish_builder,
+                                     lambda: self._show_step(0), self.source.get(), self.result_paths)
+            self.builder.pack(fill="both", expand=True)
+        self.builder_host.pack(fill="both", expand=True)
+        self._builder_changed()
+
+    def _builder_changed(self):
+        if self.route != "builder" or self.builder is None: return
+        self.page_title.set("데이터로 규칙 만들기")
+        self.page_caption.set(f"{self.builder.stage + 1}. {self.builder.TITLES[self.builder.stage]} · 같은 구조의 JSON · 선택하지 않은 값은 원본 유지")
+        self.status.set(self.builder.status.get())
+        self._sync_actions()
+
+    def _close_builder(self):
+        if self.builder:
+            self.builder.close(); self.builder.destroy(); self.builder = None
+
+    def _finish_builder(self, profile, inputs, data):
+        self._close_mapping()
+        self._set_config(profile)
+        self.source.set(inputs.source)
+        self.result_paths = list(inputs.result_files); self._render_results()
+        self.rule_file.set("간편 작성 규칙 · ‘규칙 내보내기’로 JSON 파일 저장 가능")
+        self.preloaded_preview = (self._mapping_inputs(), data)
+        self._close_builder()
+        self._wizard()
+        if self.route == "mapping":
+            self.status.set("규칙과 입력을 저장했습니다. 연결·프리뷰 확인 후 전체 데이터 검증을 진행하세요.")
 
     def _set_config(self, config):
         config = validate_config(config)
@@ -331,6 +391,8 @@ class App(Workflow):
         self.rule_summary.set(f"수정 필드 {sum(r['kind']=='field' for r in connections)}개 · 목록 {sum(r['kind'] in ('items', 'rebuild_items') for r in connections)}개 · 레코드 조건 / 검증 {checks}개\n원본 대상: {config['source'].get('glob', '**/*.json')}\n데이터를 선택한 뒤 3단계에서 필드 연결과 실제 예시를 확인합니다.")
 
     def _invalidate_preview(self):
+        if self.preloaded_preview and self.preloaded_preview[0] != self._mapping_inputs():
+            self.preloaded_preview = None
         if self.mapping and getattr(self, "mapping_inputs", None) != self._mapping_inputs():
             self._close_mapping()
         self.connection_confirmed = False
@@ -374,6 +436,8 @@ class App(Workflow):
         if path:
             try:
                 config = load_config(Path(path))
+                self._close_builder()
+                self.preloaded_preview = None
                 self._close_mapping()
                 self.source.set(""); self.result_paths = []; self._render_results()
                 if not self.output.get().strip(): self.output.set(str(default_output_directory()))
@@ -407,6 +471,7 @@ class App(Workflow):
         self._save_settings()
         self.current_step, self.route = 2, "mapping"
         self.steps.tab(2, state="normal"); self.steps.select(2); self.steps.pack_forget()
+        self.builder_host.pack_forget()
         self.mapping_host.pack(fill="both", expand=True)
         self.page_title.set("필드 연결과 실제 값 확인")
         self.page_caption.set("전체 입력을 검색하고 레코드를 선택하여 연결값과 적용 후 JSON을 확인하세요.")
@@ -415,9 +480,11 @@ class App(Workflow):
         if not reuse:
             self._close_mapping()
             self.mapping_inputs = self._mapping_inputs()
+            preloaded = self.preloaded_preview[1] if self.preloaded_preview and self.preloaded_preview[0] == self.mapping_inputs else None
+            self.preloaded_preview = None
             self.mapping = RuleReview(self.mapping_host, config, self._finish_mapping,
                                       lambda: self._show_step(1), source_hint=self.source.get(),
-                                      result_hints=self.result_paths, configured=True, external_navigation=True)
+                                      result_hints=self.result_paths, configured=True, external_navigation=True, preloaded=preloaded)
 
     def _mapping_inputs(self):
         return (self._config_text, self.source.get(), tuple(self.result_paths))
@@ -521,6 +588,7 @@ class App(Workflow):
     def _close(self):
         if self.running: self.status.set("‘작업 중단’을 누르고 보고서 저장이 끝나면 닫을 수 있습니다."); return
         if self.mapping and not self.mapping.closed: self.mapping._close()
+        self._close_builder()
         self._save_settings(); self.root.after_cancel(self.poll_job); self.root.destroy()
 
 
