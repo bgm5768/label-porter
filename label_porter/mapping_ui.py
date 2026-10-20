@@ -106,10 +106,12 @@ class MappingWindow:
         self.pages.pack(fill="both", expand=True)
         sample_page = ScrollPage(self.pages, padding=12)
         samples = sample_page.body
-        self.board_page = board_page = ttk.Frame(self.pages, padding=10)
+        self.board_scroll = ScrollPage(self.pages, padding=10) if getattr(self, "scroll_board", False) else None
+        board_tab = self.board_scroll if self.board_scroll is not None else ttk.Frame(self.pages, padding=10)
+        self.board_page = board_page = self.board_scroll.body if self.board_scroll is not None else board_tab
         review_page = ScrollPage(self.pages, padding=12)
         review = review_page.body
-        for frame, title in ((sample_page, "① 대조할 자료"), (board_page, "② 필드 연결"), (review_page, "③ 확인·확정")):
+        for frame, title in ((sample_page, "① 대조할 자료"), (board_tab, "② 필드 연결"), (review_page, "③ 확인·확정")):
             self.pages.add(frame, text=title)
         self.pages.bind("<<NotebookTabChanged>>", self._page_changed)
         ttk.Label(samples, text="대조할 원본 라벨과 작업 결과를 선택하세요", font=("맑은 고딕", 16, "bold")).pack(anchor="w")
@@ -141,7 +143,7 @@ class MappingWindow:
         ttk.Button(row, text="AI / 저장된 규칙 JSON 불러오기", command=self._load_rule).pack(side="left")
         self.load_button = self.next_button
 
-        heading = ttk.Frame(board_page)
+        self.heading_frame = heading = ttk.Frame(board_page)
         heading.pack(fill="x")
         ttk.Label(heading, text="규칙 이름").pack(side="left")
         ttk.Entry(heading, textvariable=self.name, width=25).pack(side="left", padx=8)
@@ -149,7 +151,7 @@ class MappingWindow:
         hint = ttk.Label(board_page, textvariable=self.step_hint, font=("맑은 고딕", 10, "bold"), foreground="#285886", wraplength=760)
         hint.pack(fill="x", pady=(10, 5))
         board_page.bind("<Configure>", lambda e: hint.configure(wraplength=max(300, e.width-24)))
-        trail = ttk.Frame(board_page)
+        self.trail_frame = trail = ttk.Frame(board_page)
         trail.pack(fill="x", pady=(0, 8))
         self.back_button = ttk.Button(trail, text="← 상위 목록", command=self._go_back, state="disabled")
         self.back_button.pack(side="left")
@@ -170,7 +172,7 @@ class MappingWindow:
         self.wire_list.pack(fill="x")
         self.wire_list.bind("<<TreeviewSelect>>", self._select_from_list)
 
-        search = ttk.Frame(board_page)
+        self.search_frame = search = ttk.Frame(board_page)
         search.pack(fill="x", pady=(0, 6))
         ttk.Label(search, text="추가할 필드 찾기").pack(side="left")
         ttk.Entry(search, textvariable=self.query, width=23).pack(side="left", padx=8)
@@ -192,7 +194,7 @@ class MappingWindow:
         self.canvas.bind("<Delete>", lambda event: self._delete_wire())
         self.canvas.bind("<Escape>", lambda event: self._cancel_pending())
 
-        actions = ttk.Frame(board_page)
+        self.connection_actions = actions = ttk.Frame(board_page)
         actions.pack(fill="x", pady=8)
         self.array_button = ttk.Button(actions, text="목록 안쪽 연결 →", command=self._enter_array, state="disabled")
         self.array_button.pack(side="left")
@@ -231,7 +233,8 @@ class MappingWindow:
         board.pack(fill="both", expand=True)
 
         ttk.Label(review, text="원본이 어떻게 바뀌는지 확인하세요", font=("맑은 고딕", 16, "bold")).pack(anchor="w")
-        ttk.Label(review, text="자료가 있으면 연결키와 최대 120건의 변경 전후를 확인합니다.\n예시 검사는 참고용입니다. 실제 저장 전에는 전체 데이터 검증을 반드시 거칩니다.", wraplength=720).pack(anchor="w", pady=8)
+        self.review_caption = ttk.Label(review, text="자료가 있으면 연결키와 최대 120건의 변경 전후를 확인합니다.\n예시 검사는 참고용입니다. 실제 저장 전에는 전체 데이터 검증을 반드시 거칩니다.", wraplength=720)
+        self.review_caption.pack(anchor="w", pady=8)
         self.test_button = ttk.Button(review, text="변경 전후 검사하기", command=self._test, state="disabled")
         self.test_button.pack(anchor="w", pady=8)
         self.preview_box = scrolledtext.ScrolledText(review, wrap="word", font=("맑은 고딕", 10), height=18, state="disabled")
@@ -459,8 +462,9 @@ class MappingWindow:
             return
         try:
             sp, rp = self._pointer(self.source_container), self._pointer(self.result_container)
-            self.root_scope = (import_profile(self.profile, self.source_sample, self.result_sample, sp, rp) if self.profile else
-                               Scope(self.source_sample.rows(sp), self.result_sample.rows(rp), self.source_sample.meta))
+            source, result = self._scope_samples(sp, rp)
+            self.root_scope = (import_profile(self.profile, source, result, sp, rp) if self.profile else
+                               Scope(source.rows(sp), result.rows(rp), source.meta))
             self.scope = self.root_scope
             self.history = []
             self.pending = self.selected = None
@@ -792,6 +796,15 @@ class MappingWindow:
         except (ValueError, TypeError, KeyError) as exc:
             self.status.set(f"연결 설정 확인: {exc}")
 
+    def _scope_samples(self, source_pointer, result_pointer):
+        return self.source_sample, self.result_sample
+
+    def _preview_report(self, config):
+        return preview_profile(config, self.root_scope.source_rows, self.root_scope.result_rows, self.source_sample.meta)
+
+    def _preview_note(self):
+        return f"전체 연결키 중복을 검사하며 변경 전후 검사는 원본 최대 {SAMPLE_LIMIT}건입니다."
+
     def _config(self):
         if not self.root_scope:
             raise DataError("예시 파일 또는 저장된 규칙을 먼저 불러오세요.")
@@ -821,7 +834,7 @@ class MappingWindow:
             lines = [self.status.get(), f"원본 {self.source_sample.file_count:,}개 파일 / {report['source_loaded']:,}건 · 결과 {self.result_sample.file_count:,}개 파일 / {report['result_loaded']:,}건",
                      f"전체 원본 연결: 매칭 {coverage.get('matched',0):,} · 결과 없음 {coverage.get('no_result',0):,} · 중복 관련 {coverage.get('duplicate',0):,} · 키 오류 {coverage.get('invalid_source',0):,}",
                      f"전체 결과의 중복 키 관련 행: {report['duplicate_result_rows']:,}건",
-                     f"전체 연결키 중복을 검사하며 변경 전후 검사는 원본 최대 {SAMPLE_LIMIT}건입니다.",
+                     self._preview_note(),
                      f"결과의 연결 기준값 해석 오류: {report['invalid_result_keys']}건", ""]
             if not good:
                 lines.append("성공적으로 연결된 예시가 없습니다. 연결 기준과 실제 필드를 확인하세요.")
@@ -838,7 +851,7 @@ class MappingWindow:
             self.preview_box.delete("1.0", "end")
             self.preview_box.insert("1.0", "\n".join(lines))
             self.preview_box.configure(state="disabled")
-        self._async(lambda: preview_profile(config, self.root_scope.source_rows, self.root_scope.result_rows, self.source_sample.meta), complete)
+        self._async(lambda: self._preview_report(config), complete)
 
     def _apply(self):
         try:

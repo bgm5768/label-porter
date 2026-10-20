@@ -22,6 +22,7 @@ TRANSFORMS = {
     "끝 숫자 ID": [{"op": "regex", "pattern": r"(\d+)$"}],
     "밀리초 → 초": [{"op": "number"}, {"op": "scale", "value": 0.001}],
     "초 → 밀리초": [{"op": "number"}, {"op": "scale", "value": 1000}],
+    "소수 1자리 반올림": [{"op": "number"}, {"op": "round", "digits": 1}],
 }
 
 
@@ -240,7 +241,7 @@ def load_samples(selection, source_root=None, progress=None, cancel=None, patter
         if cancel and cancel():
             raise DataError("파일 읽기를 중단했습니다.")
         try:
-            files.append(load_sample(path, root))
+            files.append(load_sample(path, root, progress=progress, cancel=cancel))
         except (OSError, ValueError, UnicodeError) as exc:
             raise DataError(f"파일 읽기 실패: {path}\n{exc}") from exc
         if progress and (index == 1 or index % 200 == 0 or index == len(paths)):
@@ -248,11 +249,17 @@ def load_samples(selection, source_root=None, progress=None, cancel=None, patter
     return SampleCollection(files, copy.deepcopy(selection), root)
 
 
-def load_sample(path, source_root=None):
+def load_sample(path, source_root=None, *, progress=None, cancel=None):
     path = Path(path).resolve()
     if path.suffix.lower() not in (".json", ".jsonl", ".ndjson"):
         raise DataError("선 연결에는 JSON/JSONL 샘플을 선택하세요. CSV 규칙은 AI 가이드와 고급 편집에서 만들 수 있습니다.")
-    document = read_document(path, "utf-8-sig", "json")
+    def checkpoint():
+        if cancel and cancel():
+            raise DataError("파일 읽기를 중단했습니다.")
+    document = read_document(
+        path, "utf-8-sig", "json",
+        progress=(lambda done, total, count: progress(f"{path.name} 읽는 중 · {done / max(total, 1):.0%} · {count:,}건")) if progress else None,
+        checkpoint=checkpoint if cancel else None)
     candidates = []
 
     def discover(value, pointer, depth=0):
@@ -619,7 +626,7 @@ def _context(row, meta):
             "root_original": row, "root_result": row, "meta": meta}
 
 
-def preview_profile(config, source_rows, result_rows, meta):
+def preview_profile(config, source_rows, result_rows, meta, *, sample_indices=None):
     index, original_counts = defaultdict(list), Counter()
     errors = []
     invalid_results = 0
@@ -652,9 +659,11 @@ def preview_profile(config, source_rows, result_rows, meta):
             matched_indices.append(number)
     counts = Counter()
     examples = []
-    sampled = sample_rows(list(range(len(source_rows))))
+    sampled = sample_rows(list(range(len(source_rows)))) if sample_indices is None else list(sample_indices)
+    if any(not isinstance(i, int) or i < 0 or i >= len(source_rows) for i in sampled):
+        raise DataError("검사할 원본 항목 번호가 범위를 벗어났습니다.")
     # A small partial export must still get a useful before/after example.
-    if matched_indices and not set(sampled).intersection(matched_indices):
+    if sample_indices is None and matched_indices and not set(sampled).intersection(matched_indices):
         sampled[-1] = matched_indices[0]
     for number in sampled:
         original = source_rows[number]

@@ -126,6 +126,14 @@ class App(Workflow):
         self.import_rule_button.pack(side="left")
         self.paste_rule_button = ttk.Button(row, text="JSON 붙여넣기…", command=lambda: self._show_tools(1))
         self.paste_rule_button.pack(side="left", padx=8)
+        self.manual_options = tk.BooleanVar(value=False)
+        ttk.Checkbutton(group, text="선택 기능 · JSON 한 건으로 직접 연결하기",
+                        variable=self.manual_options, command=self._toggle_manual_options).pack(anchor="w", pady=(12, 0))
+        self.manual_options_frame = ttk.Frame(group, style="Card.TFrame")
+        ttk.Label(self.manual_options_frame, text="원본과 플랫폼 결과 또는 별도 보완 JSON을 읽고, 한 건의 키와 수정값을 직접 연결합니다.",
+                  style="CardMuted.TLabel", wraplength=700).pack(anchor="w", pady=(8, 6))
+        self.manual_match_button = ttk.Button(self.manual_options_frame, text="한 건으로 규칙 만들기…", command=self._manual_match)
+        self.manual_match_button.pack(anchor="w")
         group = card(project, "현재 규칙")
         ttk.Label(group, textvariable=self.rule_title, style="CardTitle.TLabel").pack(anchor="w", pady=(12, 8))
         ttk.Label(group, textvariable=self.rule_summary, style="CardMuted.TLabel", wraplength=720).pack(fill="x")
@@ -138,7 +146,7 @@ class App(Workflow):
         ttk.Label(inputs, textvariable=self.input_hint, wraplength=760, foreground="#245eb7").pack(fill="x", pady=(0, 14))
         group = card(inputs, "1. 보완 전 원본 라벨 폴더", "여러 개별 JSON 또는 여러 건을 담은 통합 JSON 모두 가능합니다. 하위 폴더도 포함합니다.")
         self._path_row(group, self.source, self._choose_source)
-        group = card(inputs, "2. 플랫폼에서 내려받은 최종 작업 결과", "같은 프로젝트의 보완·검수 결과 JSON / CSV를 선택하세요.")
+        group = card(inputs, "2. 플랫폼 결과 또는 별도 보완 데이터", "같은 프로젝트의 보완·검수 결과 JSON / CSV를 선택하세요.")
         ttk.Label(group, textvariable=self.result_count, style="CardMuted.TLabel").pack(anchor="w", pady=(0, 6))
         row = ttk.Frame(group, style="Card.TFrame"); row.pack(fill="x")
         tools = ttk.Frame(row, style="Card.TFrame"); tools.pack(side="right", padx=(10, 0))
@@ -380,6 +388,33 @@ class App(Workflow):
         self.footer.pack_forget()
         self.mapping = RuleReview(self.mapping_host, config, self._finish_mapping,
                                   lambda: self._show_step(0), self._copy_revision)
+
+    def _toggle_manual_options(self):
+        if self.manual_options.get():
+            self.manual_options_frame.pack(fill="x")
+        else:
+            self.manual_options_frame.pack_forget()
+
+    def _manual_match(self):
+        if self.running or (self.mapping and not self.mapping.closed):
+            return
+        from .record_matching import RecordMatching
+        self.current_step, self.route = 0, "mapping"
+        self.steps.pack_forget(); self.tools_host.pack_forget()
+        self.mapping_host.pack(fill="both", expand=True)
+        self.page_title.set("직접 연결 · JSON 한 건으로 규칙 만들기")
+        self.page_caption.set("선택 기능 · 원본과 보완 데이터의 한 건을 비교하고, 연결키와 수정할 값을 지정하세요.")
+        self._sync_actions(); self.footer.pack_forget()
+        self.mapping = RecordMatching(self.mapping_host, self._accept_manual,
+                                     embedded=True, on_cancel=lambda: self._show_step(0))
+
+    def _accept_manual(self, config, source_sample, result_sample):
+        # Sample selections are not the full processing scope. Do not expand a
+        # selected file to its parent folder or quietly replace existing inputs.
+        self._set_config(config)
+        self.mapping = None
+        self._advance_inputs()
+        self.status.set("한 건 시험 적용을 마친 규칙입니다. 실제 처리할 전체 입력을 선택하고 전체 데이터를 검증하세요.")
 
     def _copy_revision(self, config, request):
         prompt = ("아래 작성 가이드와 현재 규칙을 기준으로 수정해 주세요. 함께 제공한 원본 라벨과 플랫폼 결과를 다시 대조하세요.\n\n"

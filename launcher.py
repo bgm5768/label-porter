@@ -133,6 +133,20 @@ def self_test(output):
                                                 {"items": [{"id": 99, "text": "new"}, {"id": 100, "text": "added"}]},
                                                 rebuild_profile, {})
             assert state == "updated" and rebuilt["items"] == [{"id": 1, "text": "new"}, {"id": 2, "text": "added"}]
+            # Ensure the optional editor is bundled and can create a one-record
+            # rule without loading user settings or expanding sample inputs.
+            from label_porter.record_matching import RecordMatching
+            optional = RecordMatching(root, lambda *_: None)
+            optional.window.withdraw()
+            optional.source_sample, optional.result_sample = collection, exports
+            optional.source_container.set("파일 전체"); optional.result_container.set("파일 전체")
+            optional.dirty = False
+            optional._reset_scope()
+            optional._pick(("source", "@file_name")); optional._pick(("result", "/file"))
+            optional._pick(("source", "/label")); optional._pick(("result", "/new"))
+            one = optional._preview_report(optional._config())
+            assert one["sampled"] == 1 and one["counts"] == {"updated": 1}
+            optional._close()
         root.destroy()
         Path(output).write_text(json.dumps({"ok": True, "tk": True, "profiles": 4, "engine": True, "original_preserved": True, "split_output": True, "date_sequence": True, "reusable_preview": True, "media_feature_removed": True, "ai_guide_bundled": True, "general_project_help": True, "visual_wiring": True, "three_step_workflow": True, "ai_rule_roundtrip": True, "persistent_wires": True, "multiple_sample_files": True, "per_file_identity": True, "ai_first_workflow": True, "readonly_field_review": True, "automatic_next_step": True}), encoding="utf-8")
         return 0
