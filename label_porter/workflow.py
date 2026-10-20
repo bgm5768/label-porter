@@ -17,31 +17,16 @@ def resource_directory():
     return Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parents[1]))
 
 
+def default_output_directory():
+    # A frozen app's resources live in a temporary _MEIPASS folder, not beside its EXE.
+    program = Path(sys.executable).resolve().parent if getattr(sys, "frozen", False) else Path(__file__).resolve().parents[1]
+    return program / "results"
+
+
 class Workflow:
-    @staticmethod
-    def _document_view(frame, text):
-        box = scrolledtext.ScrolledText(frame, wrap="word", font=("맑은 고딕", 10), padx=10, pady=8)
-        box.insert("1.0", text)
-        box.tag_configure("title", font=("맑은 고딕", 15, "bold"), spacing1=8, spacing3=6)
-        box.tag_configure("heading", font=("맑은 고딕", 11, "bold"), spacing1=8, spacing3=3)
-        box.tag_configure("code", font=("Consolas", 10), foreground="#25465b", background="#f0f4f7")
-        in_code = False
-        for number, line in enumerate(text.splitlines(), 1):
-            tag = None
-            if line.startswith("```"):
-                in_code = not in_code
-                tag = "code"
-            elif in_code:
-                tag = "code"
-            elif line.startswith("# "):
-                tag = "title"
-            elif line.startswith(("## ", "### ")):
-                tag = "heading"
-            if tag:
-                box.tag_add(tag, f"{number}.0", f"{number}.end")
-        box.configure(state="disabled")
-        box.pack(fill="both", expand=True)
-        return box
+    def _document_view(self, frame, text):
+        from .markdown_viewer import MarkdownViewer
+        return MarkdownViewer(frame, text, navigate=lambda index: self.tabs.select(index))
 
     def _copy_ai_guide(self):
         try:
@@ -69,7 +54,7 @@ class Workflow:
         if not self.result_paths or any(not Path(path).is_file() for path in self.result_paths):
             raise ValueError("실제 처리할 작업 결과 파일을 선택하세요.")
         if not self.output.get().strip():
-            raise ValueError("결과를 저장할 상위 폴더를 지정하세요.")
+            self.output.set(str(default_output_directory()))
         source, output = Path(self.source.get()).resolve(), Path(self.output.get()).resolve()
         if output == source or output.is_relative_to(source):
             raise ValueError("저장 위치는 원본 폴더 밖으로 선택하세요.")
@@ -85,8 +70,6 @@ class Workflow:
         path = filedialog.askdirectory(title="보완 전 라벨 JSON이 있는 폴더 선택")
         if path:
             self.source.set(path)
-            if not self.output.get():
-                self.output.set(str(Path(path).parent / "포팅결과"))
 
     def _choose_output(self):
         path = filedialog.askdirectory(title="실행 결과를 저장할 상위 폴더")

@@ -1,12 +1,16 @@
 # -*- mode: python ; coding: utf-8 -*-
+from PyInstaller.utils.hooks import collect_all
+
+web_datas, web_binaries, web_imports = collect_all('tkinterweb')
+tk_datas, tk_binaries, tk_imports = collect_all('tkinterweb_tkhtml')
 
 
 a = Analysis(
     ['launcher.py'],
     pathex=[],
-    binaries=[],
-    datas=[('profiles', 'profiles'), ('사용설명.md', '.'), ('AI_규칙작성_가이드.md', '.'), ('후처리_지원범위.md', '.')],
-    hiddenimports=[],
+    binaries=web_binaries + tk_binaries,
+    datas=[('profiles', 'profiles'), ('사용설명.md', '.'), ('AI_규칙작성_가이드.md', '.'), ('후처리_지원범위.md', '.'), ('THIRD_PARTY_NOTICES.txt', '.')] + web_datas + tk_datas,
+    hiddenimports=web_imports + tk_imports,
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

@@ -26,9 +26,11 @@ def self_test(output):
         assert str(app.steps.tab(1, "state")) == "disabled"
         assert "AI 규칙 작성 가이드" in [app.tabs.tab(tab, "text") for tab in app.tabs.tabs()]
         assert "schema_version" in app.ai_guide_text
-        assert app.ai_guide_box.get("1.0", "end-1c") == app.ai_guide_text
-        assert app.help_box.get("1.0", "end-1c") == app.help_text
-        assert app.capabilities_box.get("1.0", "end-1c") == app.capabilities_text
+        assert app.ai_guide_box.source == app.ai_guide_text
+        assert app.help_box.source == app.help_text
+        assert app.capabilities_box.source == app.capabilities_text
+        assert "<table>" in app.ai_guide_box.html_source
+        assert app.ai_guide_box.browser.document.getElementById("section-0").textContent
         assert "rebuild_items" in app.capabilities_text
         assert app.tabs.tab(2, "text") == "후처리 지원 범위"
         assert all(text not in app.help_text for text in ("one_before", "one_after", "008", "013"))

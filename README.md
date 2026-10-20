@@ -1,6 +1,6 @@
 # 라벨 포터
 
-**버전 관리 기준: v1 (2026-10-20)** — 프로그램 2.4.0을 첫 Git 기준 버전으로 보관합니다. `v1` 태그로 이 상태를 다시 확인할 수 있습니다. 현재 프로그램은 **2.13.0**이며 변경 내역은 [CHANGELOG.md](CHANGELOG.md)에 기록합니다.
+**버전 관리 기준: v1 (2026-10-20)** — 프로그램 2.4.0을 첫 Git 기준 버전으로 보관합니다. `v1` 태그로 이 상태를 다시 확인할 수 있습니다. 현재 프로그램은 **2.14.0**이며 변경 내역은 [CHANGELOG.md](CHANGELOG.md)에 기록합니다.
 
 플랫폼 DB에 접근하지 않고, 어드민에서 내려받은 작업 결과를 원본 라벨링 JSON에 반영하는 Windows 데스크톱 프로그램입니다. 모든 데이터 처리는 로컬에서 이루어집니다. 외부 서비스나 AI 호출이 없습니다.
 
@@ -18,8 +18,8 @@
 
 ## 실행
 
-- Windows 실행 파일: `dist/v2.13/LabelPorter.exe`를 더블클릭합니다. Python 설치가 필요하지 않습니다.
-- 소스 실행: Python 3.11 이상에서 `python -m label_porter` 또는 `start.cmd`를 실행합니다. 외부 패키지가 필요 없습니다. Windows 공식 Python의 Tkinter를 사용합니다.
+- Windows 실행 파일: `dist/v2.14/LabelPorter.exe`를 더블클릭합니다. Python 설치가 필요하지 않습니다.
+- 소스 실행: Python 3.11 이상에서 `python -m label_porter` 또는 `start.cmd`를 실행합니다. 먼저 `python -m pip install -r requirements.txt`로 문서 뷰어 의존성을 설치합니다. Windows 공식 Python의 Tkinter를 사용합니다. 실행 파일에는 문서 뷰어가 내장되어 별도 설치가 필요 없습니다.
 - 상세 규칙 설명: [사용설명.md](사용설명.md)
 - 후처리 가능 수준과 제한: [후처리_지원범위.md](후처리_지원범위.md) — 프로그램의 사용 방법 화면에도 포함됩니다.
 
@@ -75,6 +75,8 @@
     001/                  다음 날 첫 번째 반영
 ```
 
+저장 위치를 지정하지 않으면 실행 파일 옆 `results` 폴더를 사용합니다(소스 실행은 프로젝트 폴더의 `results`). 직접 선택한 저장 경로에는 `포팅결과`를 덧붙이지 않습니다. 해당 경로 아래의 날짜·순번 및 미리보기 구조는 유지됩니다.
+
 날짜는 **한국 시간** 기준입니다. 순번은 같은 날짜 폴더의 가장 큰 숫자 다음으로 발급하며 999 다음에는 1000입니다. 미리보기는 순번을 사용하지 않습니다. 기존 실제 반영 결과와 이전 버전의 `run_...`, `preview_...` 폴더는 이동하거나 삭제하지 않습니다.
 
 미리보기의 보고서·설정·명세는 최신 실행으로 갱신됩니다. 보관할 미리보기 보고서는 다음 검증 전에 따로 복사하세요. 같은 저장 위치에서 동시에 미리보기를 실행하면 두 번째 실행을 차단합니다. 프로젝트마다 저장 상위 폴더를 따로 지정하면 프로젝트별 최신 미리보기를 유지할 수 있습니다.
@@ -101,7 +103,7 @@
 
 [AI_규칙작성_가이드.md](AI_규칙작성_가이드.md)는 별도 파일 하나로 AI에 전달할 수 있습니다. 데이터 역할 확인, 고유 키와 필드 대응, 허용 문법, 배열 객체 연결, 단위 변환, 보존 정책, 검증 절차와 반환 형식을 정의합니다. 문서의 텍스트·객체·시간 구간 예제는 가상 구조이며 실제 프로젝트에 맞춰 작성하도록 안내합니다.
 
-프로그램의 AI 가이드·사용 방법·후처리 지원 범위 탭은 배포에 포함된 각 Markdown 원문을 표시합니다. 가이드는 실행 파일에도 내장되어 단독 EXE로 사용할 때도 읽기·복사·파일 저장이 가능합니다.
+프로그램의 AI 가이드·사용 방법·후처리 지원 범위 탭은 배포에 포함된 각 Markdown을 제목·표·강조·코드 서식으로 표시합니다. 목차 이동, 문서 검색, 글자 크기 조절을 지원하며 복사·저장에는 MD 원문을 사용합니다. 가이드는 실행 파일에도 내장되어 단독 EXE로 사용할 때도 읽기·복사·파일 저장이 가능합니다.
 
 ## 명령행
 
@@ -132,9 +134,9 @@ Windows 단일 실행 파일 빌드:
 
 ```powershell
 python -m venv .venv
-.\.venv\Scripts\python.exe -m pip install pyinstaller==6.22.3
-.\.venv\Scripts\python.exe -m PyInstaller --noconfirm --clean --distpath 'dist\v2.13' --workpath 'build\v2.13' LabelPorter.spec
-Copy-Item -LiteralPath '사용설명.md','AI_규칙작성_가이드.md','후처리_지원범위.md' -Destination 'dist\v2.13'
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt pyinstaller==6.22.3
+.\.venv\Scripts\python.exe -m PyInstaller --noconfirm --clean --distpath 'dist\v2.14' --workpath 'build\v2.14' LabelPorter.spec
+Copy-Item -LiteralPath '사용설명.md','AI_규칙작성_가이드.md','후처리_지원범위.md','THIRD_PARTY_NOTICES.txt' -Destination 'dist\v2.14'
 ```
 
 ## 저장소에 포함하는 파일

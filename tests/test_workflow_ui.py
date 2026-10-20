@@ -7,6 +7,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from label_porter.gui import App
+from label_porter.workflow import default_output_directory
 
 
 class WorkflowUiTests(unittest.TestCase):
@@ -166,8 +167,8 @@ class WorkflowUiTests(unittest.TestCase):
             self.assertEqual(app.tabs.index(app.tabs.select()), 1)
             app.tabs.select(2); self.root.update()
             self.assertEqual(app.tabs.tab(2, "text"), "후처리 지원 범위")
-            self.assertEqual(app.capabilities_box.get("1.0", "end-1c"), app.capabilities_text)
-            self.assertEqual(str(app.capabilities_box["state"]), "disabled")
+            self.assertEqual(app.capabilities_box.source, app.capabilities_text)
+            self.assertIn("<table>", app.capabilities_box.html_source)
             app.back_button.invoke(); self.root.update()
             self.assertEqual(app.route, 'mapping')
             self.assertIs(app.mapping, board)
@@ -339,6 +340,37 @@ class WorkflowUiTests(unittest.TestCase):
             self.assertEqual(app.result_paths, [])
             self.assertEqual(app._get_config()['name'], 'new rules')
             self.assertEqual(self.sf.read_bytes(), original)
+
+    def test_output_default_and_selected_path_are_not_based_on_source_folder(self):
+        with patch.object(App, "_load_settings"), patch.object(App, "_save_settings"):
+            app = App(self.root); app._set_config(self.config())
+            self.assertEqual(Path(app.output.get()), default_output_directory())
+            chosen = self.base/"my-output"
+            with patch("label_porter.workflow.filedialog.askdirectory", return_value=str(chosen)):
+                app._choose_output()
+            with patch("label_porter.workflow.filedialog.askdirectory", return_value=str(self.source)):
+                app._choose_source()
+            self.assertEqual(app.output.get(), str(chosen))
+            app.result_paths = [str(self.rf)]
+            app._check_inputs()
+            self.assertEqual(Path(app.output.get()), chosen)
+            app.output.set("")
+            with patch("label_porter.workflow.default_output_directory", return_value=self.base/"program"/"results"):
+                app._check_inputs()
+            self.assertEqual(Path(app.output.get()), self.base/"program"/"results")
+            self.assertFalse((self.base/"program").exists())
+            # Rule import must preserve an explicit destination.
+            app.output.set(str(chosen))
+            rule = self.base/"rules.json"; rule.write_text(json.dumps(self.config()), encoding="utf-8")
+            with patch("label_porter.gui.filedialog.askopenfilename", return_value=str(rule)):
+                app._load_profile()
+            self.assertEqual(app.output.get(), str(chosen))
+
+    def test_frozen_output_default_is_next_to_executable_not_temporary_resources(self):
+        with patch("label_porter.workflow.sys.frozen", True, create=True), \
+             patch("label_porter.workflow.sys.executable", str(self.base/"program"/"LabelPorter.exe")), \
+             patch("label_porter.workflow.sys._MEIPASS", str(self.base/"temporary"), create=True):
+            self.assertEqual(default_output_directory(), self.base/"program"/"results")
 
 
 if __name__ == "__main__":

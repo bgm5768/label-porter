@@ -15,7 +15,7 @@ from .config import load_config, validate_config
 from .rule_review import RuleReview, profile_connections
 from .reports import STATUS, ISSUES
 from .ui import INK, MUTED, ScrollPage, card, setup_style
-from .workflow import Workflow, resource_directory, AI_GUIDE_FILENAME
+from .workflow import Workflow, resource_directory, default_output_directory, AI_GUIDE_FILENAME
 
 
 class App(Workflow):
@@ -37,7 +37,7 @@ class App(Workflow):
         self.result_paths = []
         self.current_step, self.route = 0, "workflow"
         self.help_return = None
-        self.source, self.output = tk.StringVar(), tk.StringVar()
+        self.source, self.output = tk.StringVar(), tk.StringVar(value=str(default_output_directory()))
         self.split_output = tk.BooleanVar(value=True)
         self.status = tk.StringVar(value="규칙 JSON 파일을 불러오면 입력·저장 위치 선택으로 이동합니다.")
         self.rule_file = tk.StringVar(value="아직 불러온 파일이 없습니다.")
@@ -154,7 +154,7 @@ class App(Workflow):
                                      highlightbackground="#dce3ee", background="#f8faff", foreground=INK, selectbackground="#dbeafe", selectforeground=INK)
         scroll = ttk.Scrollbar(row, command=self.result_list.yview); scroll.pack(side="right", fill="y")
         self.result_list.configure(yscrollcommand=scroll.set); self.result_list.pack(fill="x", expand=True)
-        group = card(inputs, "3. 새 결과를 저장할 폴더", "반영 결과는 날짜 / 001, 002… 폴더에 저장합니다. 원본 폴더 밖을 선택하세요.")
+        group = card(inputs, "3. 새 결과를 저장할 폴더", "기본값은 프로그램 폴더의 results입니다. 직접 선택한 경로에는 이름을 덧붙이지 않습니다. 그 아래 날짜 / 순번으로 실행별 결과를 보관합니다.")
         self._path_row(group, self.output, self._choose_output)
         ttk.Checkbutton(inputs, text="정상 데이터도 변경 / 미변경으로 분리 · 검토·짝 없음·조건 제외·파일 오류는 분류별 examine에 저장", variable=self.split_output).pack(anchor="w", pady=(0, 12))
         group = card(review, "이번 작업", "전체 데이터 검증을 마쳐야 복사본을 저장할 수 있습니다.")
@@ -189,9 +189,8 @@ class App(Workflow):
         self.tabs.add(capabilities, text="후처리 지원 범위")
         row = ttk.Frame(ai); row.pack(fill="x", pady=(0, 12))
         ttk.Button(row, text="가이드 복사", command=self._copy_ai_guide).pack(side="left")
-        ttk.Button(row, text="MD 파일 저장", command=self._save_ai_guide).pack(side="left", padx=8)
+        ttk.Button(row, text="가이드 저장", command=self._save_ai_guide).pack(side="left", padx=8)
         self.ai_guide_box = self._document_view(ai, self.ai_guide_text)
-        ttk.Button(help_page, text="처리 가능한 업무와 제한 보기 →", command=lambda: self.tabs.select(2)).pack(anchor="w", pady=(0, 10))
         self.help_box = self._document_view(help_page, self.help_text)
         self.capabilities_box = self._document_view(capabilities, self.capabilities_text)
 
@@ -372,7 +371,8 @@ class App(Workflow):
             try:
                 config = load_config(Path(path))
                 self._close_mapping()
-                self.source.set(""); self.output.set(""); self.result_paths = []; self._render_results()
+                self.source.set(""); self.result_paths = []; self._render_results()
+                if not self.output.get().strip(): self.output.set(str(default_output_directory()))
                 self._set_config(config)
                 self.rule_file.set(str(Path(path)))
                 self._advance_inputs()
@@ -492,7 +492,7 @@ class App(Workflow):
     def _load_settings(self):
         try:
             s = json.loads(self.settings_path.read_text(encoding="utf-8"))
-            self.source.set(s.get("source", "")); self.output.set(s.get("output", "")); self.split_output.set(s.get("split_output", True))
+            self.source.set(s.get("source", "")); self.output.set(s.get("output") or str(default_output_directory())); self.split_output.set(s.get("split_output", True))
             self.result_paths = [p for p in s.get("results", []) if Path(p).is_file()]; self._render_results()
             if s.get("config"): self._set_config(s["config"])
             elif s.get("profile") in self.profiles: self._set_config(self.profiles[s["profile"]][1])

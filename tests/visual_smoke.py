@@ -20,7 +20,7 @@ def main():
     root = tk.Tk()
     errors = []
     root.report_callback_exception = lambda *args: errors.append(args)
-    output = Path('outputs/ui-v213')
+    output = Path('outputs/ui-v214')
     output.mkdir(parents=True, exist_ok=True)
     def wait(predicate):
         end = time.monotonic()+20
@@ -53,6 +53,20 @@ def main():
             capture('00-help')
             app._show_tools(2); root.update()
             capture('00-capabilities')
+            reader = app.capabilities_box
+            reader.toc.current(next(i for i, h in enumerate(reader.headings) if h[1].startswith("2.")))
+            reader._jump(); root.update()
+            capture('00-capabilities-table')
+            root.geometry('1040x680+20+20'); root.update()
+            capture('00-small-document')
+            app._show_tools(0); root.update()
+            reader = app.ai_guide_box
+            reader.toc.current(next(i for i, h in enumerate(reader.headings) if h[1].startswith("완전한 예시 D")))
+            reader._jump(); root.update()
+            capture('00-guide-example')
+            reader.query.set("rebuild_items"); reader.find(); root.update()
+            capture('00-guide-search')
+            root.geometry('1280x880+20+20'); root.update()
             app.back_button.invoke()
             assert app.current_step == 0
             profile = {'schema_version':1,'name':'문장 보완 프로젝트 · AI 규칙',
