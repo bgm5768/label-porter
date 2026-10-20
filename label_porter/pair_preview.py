@@ -5,7 +5,7 @@ import copy
 import json
 import time
 from collections import Counter
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from .config import validate_config
@@ -83,6 +83,8 @@ class PreviewData:
     result_total: int
     invalid_result_keys: int
     fingerprint: tuple
+    result_records: list = field(default_factory=list)
+    catalog: list = field(default_factory=list)
 
 
 def load_preview(profile, source, results, root="", progress=None, cancel=None):
@@ -135,6 +137,7 @@ def load_preview(profile, source, results, root="", progress=None, cancel=None):
     if not originals:
         raise DataError("규칙에서 지정한 위치에 원본 레코드가 없습니다.")
     found, counts, total, invalid = {}, Counter(), 0, 0
+    result_records = []
     for path in paths:
         spec = profile["result"]
         # Results default to auto, as in engine.run (including CSV JSON cells).
@@ -142,13 +145,16 @@ def load_preview(profile, source, results, root="", progress=None, cancel=None):
         for number, (doc, pointer, row) in enumerate(records(document, spec), 1):
             checkpoint(); total += 1
             meta = metadata(path, result=True, number=number)
+            location = f"{path.name} · {number:,}번 · doc:{doc}{pointer}"
             try:
                 if not isinstance(row, dict):
                     raise DataError("결과 레코드가 JSON 객체가 아닙니다.")
                 key = canonical_key(expression(spec["key"], context(row, meta)))
             except ERRORS:
                 invalid += 1
+                result_records.append((None, row, meta, location))
                 continue
+            result_records.append((key, row, meta, location))
             counts[key] += 1
             if counts[key] == 1 and key in source_counts:
                 found[key] = (row, meta, f"{path.name} · {number:,}번 · doc:{doc}{pointer}")
@@ -160,7 +166,78 @@ def load_preview(profile, source, results, root="", progress=None, cancel=None):
     if progress: progress("읽은 데이터의 변경 여부를 마지막으로 확인하고 있습니다…")
     if fingerprint(source, paths, root, profile["source"].get("glob", "**/*.json"), checkpoint) != stamp:
         raise DataError("읽는 동안 파일이 바뀌었습니다. 다시 불러오세요.")
-    return PreviewData(profile, originals, source_keys, source_counts, found, counts, total, invalid, stamp)
+    data = PreviewData(profile, originals, source_keys, source_counts, found, counts, total, invalid, stamp,
+                       result_records)
+    if progress: progress("전체 레코드의 검색 목록을 준비하고 있습니다…")
+    data.catalog = build_catalog(data, checkpoint)
+    return data
+
+
+def build_catalog(data, checkpoint=lambda: None):
+    """One row per unique pair; ambiguous/unmatched records stay individually visible."""
+    catalog = []
+    def add(source_index, result_record, key, state):
+        original = data.originals[source_index] if source_index is not None else None
+        incoming = result_record
+        source_location = original[2] if original else ""
+        result_location = incoming[3] if incoming else ""
+        key_text = str(json.loads(key)[1]) if key is not None else "KEY 해석 불가"
+        def searchable(value):
+            return json.dumps(value, ensure_ascii=False, separators=(",", ":")).casefold()
+        catalog.append({
+            "source_index": source_index, "incoming": incoming, "key": key_text, "state": state,
+            "source_location": source_location, "result_location": result_location,
+            "search": (key_text.casefold(), (source_location + " " + result_location).casefold(),
+                       searchable(original[0]) if original else "",
+                       searchable(incoming[1]) if incoming else "", state.casefold()),
+        })
+    for i, key in enumerate(data.source_keys):
+        checkpoint()
+        unique = key is not None and data.source_counts[key] == 1 and data.result_counts[key] == 1
+        incoming = (key, *data.results[key]) if unique else None
+        state = ("연결됨" if unique else "KEY 해석 불가" if key is None else
+                 "KEY 중복" if data.source_counts[key] > 1 or data.result_counts[key] > 1 else "원본만 있음")
+        add(i, incoming, key, state)
+    for record in data.result_records:
+        checkpoint()
+        key = record[0]
+        if key is not None and data.source_counts[key] == 1 and data.result_counts[key] == 1:
+            continue
+        state = ("KEY 해석 불가" if key is None else
+                 "KEY 중복" if data.source_counts[key] > 1 or data.result_counts[key] > 1 else "보완만 있음")
+        add(None, record, key, state)
+    return catalog
+
+
+SEARCH_FIELDS = {"전체": None, "KEY": 0, "파일명 / 위치": 1, "원본 JSON": 2, "보완 JSON": 3}
+
+
+def search_catalog(data, query="", scope="전체", state="전체 상태", checkpoint=lambda: None):
+    terms = query.casefold().split()
+    field_index = SEARCH_FIELDS[scope]
+    found = []
+    for i, entry in enumerate(data.catalog):
+        if i % 256 == 0: checkpoint()
+        if state != "전체 상태" and entry["state"] != state:
+            continue
+        fields = entry["search"] if field_index is None else (entry["search"][field_index],)
+        if all(any(term in text for text in fields) for term in terms):
+            found.append(i)
+    return found
+
+
+def catalog_preview(data, index):
+    entry = data.catalog[index]
+    if entry["state"] == "연결됨":
+        return match_preview(data, entry["source_index"])
+    original = data.originals[entry["source_index"]][0] if entry["source_index"] is not None else None
+    incoming = entry["incoming"][1] if entry["incoming"] is not None else None
+    return {"key": entry["key"], "source": original, "result": incoming, "candidate": None,
+            "output": original, "source_location": entry["source_location"] or "원본 없음",
+            "result_location": entry["result_location"] or "보완 없음", "status": "unpaired",
+            "message": entry["state"] + " · 임의로 연결하지 않습니다. 전체 검증에서 처리 사유를 확인하세요.",
+            "rows": [], "total_connections": 0, "source_total": len(data.originals),
+            "result_total": data.result_total, "invalid_result_keys": data.invalid_result_keys}
 
 
 def match_preview(data, index=0):

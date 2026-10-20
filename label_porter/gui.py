@@ -220,7 +220,6 @@ class App(Workflow):
         if index == 2:
             self._wizard()
             return
-        self._close_mapping()
         self.route, self.current_step = "workflow", index
         self.help_host.pack_forget(); self.help_return = None
         self.mapping_host.pack_forget()
@@ -325,6 +324,8 @@ class App(Workflow):
         self.rule_summary.set(f"수정 필드 {sum(r['kind']=='field' for r in connections)}개 · 목록 {sum(r['kind'] in ('items', 'rebuild_items') for r in connections)}개 · 레코드 조건 / 검증 {checks}개\n원본 대상: {config['source'].get('glob', '**/*.json')}\n데이터를 선택한 뒤 3단계에서 필드 연결과 실제 예시를 확인합니다.")
 
     def _invalidate_preview(self):
+        if self.mapping and getattr(self, "mapping_inputs", None) != self._mapping_inputs():
+            self._close_mapping()
         self.connection_confirmed = False
         self.preview_fingerprint = self.last_summary = None
         for var in self.metric_values.values(): var.set("—")
@@ -385,11 +386,12 @@ class App(Workflow):
         super()._render_results(); self.result_count.set(f"{len(self.result_paths):,}개 결과 파일 선택")
 
     def _wizard(self):
-        if self.running or (self.mapping and not self.mapping.closed): return
+        if self.running: return
+        reuse = self.mapping and not self.mapping.closed and self.mapping_inputs == self._mapping_inputs()
         try:
             config = self._get_config()
             self._check_inputs()
-            if not any(p.is_file() for p in Path(self.source.get()).glob(config["source"].get("glob", "**/*.json"))):
+            if not reuse and not any(p.is_file() for p in Path(self.source.get()).glob(config["source"].get("glob", "**/*.json"))):
                 raise ValueError("규칙의 파일 패턴에 맞는 원본 JSON이 없습니다.")
         except (OSError, ValueError, TypeError, KeyError) as exc:
             if self.rule_ready: self._show_step(1)
@@ -399,15 +401,20 @@ class App(Workflow):
         self.steps.tab(2, state="normal"); self.steps.select(2); self.steps.pack_forget()
         self.mapping_host.pack(fill="both", expand=True)
         self.page_title.set("필드 연결과 실제 값 확인")
-        self.page_caption.set("선택한 데이터에서 KEY가 같은 예시를 자동으로 불러옵니다. 규칙과 원본은 수정하지 않습니다.")
-        self.status.set("필드 연결과 적용 후 예시를 확인한 뒤 다음 단계에서 전체 데이터를 검증하세요.")
+        self.page_caption.set("전체 입력을 검색하고 레코드를 선택하여 연결값과 적용 후 JSON을 확인하세요.")
+        self.status.set("프리뷰는 세션에 유지됩니다. 외부에서 파일을 수정했다면 ‘데이터 새로 읽기’를 누르세요. 실제 저장 전 전체 검증을 진행합니다.")
         self._sync_actions()
-        self.mapping = RuleReview(self.mapping_host, config, self._finish_mapping,
-                                  lambda: self._show_step(1), source_hint=self.source.get(),
-                                  result_hints=self.result_paths, configured=True, external_navigation=True)
+        if not reuse:
+            self._close_mapping()
+            self.mapping_inputs = self._mapping_inputs()
+            self.mapping = RuleReview(self.mapping_host, config, self._finish_mapping,
+                                      lambda: self._show_step(1), source_hint=self.source.get(),
+                                      result_hints=self.result_paths, configured=True, external_navigation=True)
+
+    def _mapping_inputs(self):
+        return (self._config_text, self.source.get(), tuple(self.result_paths))
 
     def _finish_mapping(self):
-        self.mapping = None
         self.connection_confirmed = True
         self._advance_review()
 

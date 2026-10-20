@@ -20,7 +20,7 @@ def main():
     root = tk.Tk()
     errors = []
     root.report_callback_exception = lambda *args: errors.append(args)
-    output = Path('outputs/ui-v211')
+    output = Path('outputs/ui-v212')
     output.mkdir(parents=True, exist_ok=True)
     def wait(predicate):
         end = time.monotonic()+20
@@ -71,11 +71,22 @@ def main():
             board.pages.select(1); root.update()
             assert board.preview.pair['key'] == 'A001', board.preview.status.get()
             capture('03-paired-values')
-            board.preview.views.select(1); root.update()
+            board.preview.views.select(2); root.update()
             assert json.loads(board.preview.output_box.get('1.0', 'end-1c'))['label'] == '보완한 라벨'
             capture('03-json-pair')
             root.geometry('1040x680+20+20'); root.update()
             capture('03-small-preview')
+            board.preview.views.select(0); root.update()
+            capture('03-small-list')
+            remembered = board.preview.cache
+            app._navigate(1); app._navigate(2); root.update()
+            assert app.mapping is board and board.preview.cache is remembered
+            board.preview.query.set("UNKNOWN")
+            wait(lambda: len(board.preview.filtered) == 1 and board.preview.pair is not None and
+                 board.preview.pair["key"] == "UNKNOWN")
+            capture('04-search-unmatched')
+            board.preview._reset_search()
+            wait(lambda: len(board.preview.filtered) == 5)
             root.geometry('1280x880+20+20'); root.update()
             app.primary_button.invoke(); root.update()
             assert app.current_step == 3, (app.status.get(), errors)

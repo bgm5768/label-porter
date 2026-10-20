@@ -103,6 +103,7 @@ class RuleReview:
         self.rows = profile_connections(self.profile)
         self.on_continue, self.on_close = on_continue, on_close
         self.closed = False
+        self.external_navigation = external_navigation
         self.selected = None
         self.window = ttk.Frame(parent)
         self.window.pack(fill="both", expand=True)
@@ -223,7 +224,8 @@ class RuleReview:
                 break
 
     def _apply(self):
-        self._close(notify=False)
+        if not self.external_navigation:
+            self._close(notify=False)
         self.on_continue()
 
     def _close(self, notify=True):

@@ -189,14 +189,47 @@ class WorkflowUiTests(unittest.TestCase):
             app = App(self.root); app._set_config(self.config()); self.configure_inputs(app)
             self.rf.write_text('{"ref":"other","new":"value"}', encoding="utf-8")
             app._wizard(); board = app.mapping; self.boards.append(board)
-            self.until(lambda: "유일하게 연결" in board.preview.status.get())
-            self.assertIsNone(board.preview.pair)
+            self.until(lambda: board.preview.pair is not None)
+            self.assertEqual(board.preview.pair["status"], "unpaired")
+            self.assertEqual(len(board.preview.cache.catalog), 2)
             board.apply_button.invoke(); self.root.update()
             self.assertEqual(app.current_step, 3)
             app.primary_button.invoke(); self.until(lambda: not app.running)
             self.assertEqual(app.last_summary["source_status_counts"]["no_result"], 1)
             self.assertEqual(app.last_summary["result_issue_counts"]["orphan_result"], 1)
             self.assertTrue(app.preview_fingerprint)
+
+    def test_preview_session_survives_steps_and_only_data_or_rule_changes_clear_it(self):
+        with patch.object(App, "_load_settings"), patch.object(App, "_save_settings"):
+            app = App(self.root); app._set_config(self.config()); self.configure_inputs(app)
+            app._wizard(); board = app.mapping; self.boards.append(board)
+            self.until(lambda: board.preview.pair is not None)
+            board.pages.select(1); board.preview.views.select(1)
+            board.preview.query.set("a")
+            self.until(lambda: board.preview.search_job is None)
+            pair, cache = board.preview.pair, board.preview.cache
+            with patch("label_porter.pair_preview_ui.load_preview", side_effect=AssertionError("reread")), \
+                 patch("label_porter.pair_preview_ui.fingerprint", side_effect=AssertionError("rescan")):
+                app.primary_button.invoke()
+                self.assertEqual(app.current_step, 3)
+                app._navigate(0); app._navigate(1); app._navigate(2); self.root.update()
+                self.assertIs(app.mapping, board)
+                self.assertIs(board.preview.cache, cache)
+                self.assertIs(board.preview.pair, pair)
+                self.assertEqual(board.preview.query.get(), "a")
+                self.assertEqual(board.pages.index(board.pages.select()), 1)
+                app._navigate(1); app.output.set(str(self.base/"other"))
+                app._navigate(2)
+                self.assertIs(app.mapping, board)
+            app._navigate(1)
+            other = self.base/"other.json"; other.write_bytes(self.rf.read_bytes())
+            app.result_paths = [str(other)]; app._invalidate_preview()
+            self.assertTrue(board.closed)
+            app._wizard(); replacement = app.mapping; self.boards.append(replacement)
+            self.until(lambda: replacement.preview.pair is not None)
+            self.assertIsNot(replacement.preview.cache, cache)
+            app._navigate(0); app._set_config({**self.config(), "name": "new"})
+            self.assertTrue(replacement.closed)
 
     def test_rule_and_inputs_persist_without_draft_json(self):
         with patch.object(App, "_load_settings"):
@@ -256,6 +289,13 @@ class WorkflowUiTests(unittest.TestCase):
                 self.assertLessEqual(board.canvas.bbox(item)[2], board.canvas.winfo_width()+2)
             self.assertFalse(board.canvas.bind('<B1-Motion>'))
             self.assertFalse(board.canvas.bind('<Delete>'))
+            self.until(lambda: board.preview.pair is not None)
+            board.pages.select(1); board.preview.views.select(0); self.root.update()
+            self.assertGreater(board.preview.table.winfo_height(), 100)
+            self.assertTrue(board.preview.next_page.winfo_ismapped())
+            self.assertLess(board.preview.next_page.winfo_rooty(), app.back_button.winfo_rooty())
+            board.preview._open_selected(); self.root.update()
+            self.assertEqual(board.preview.views.index(board.preview.views.select()), 1)
             board._close(); self.root.update()
             self.assertEqual(app.route, 'workflow')
 

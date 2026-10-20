@@ -9,7 +9,7 @@ from unittest.mock import patch
 
 from label_porter.config import validate_config
 from label_porter.formats import DataError
-from label_porter.pair_preview import load_preview, match_preview, matching_indices
+from label_porter.pair_preview import load_preview, match_preview, matching_indices, search_catalog, catalog_preview
 from label_porter.pair_preview_ui import PairPreview
 from label_porter.rules import apply_record
 
@@ -161,6 +161,26 @@ class PairTests(unittest.TestCase):
         self.assertEqual(pair["rows"][2]["source_path"], "/parts/0/value")
         self.assertEqual(pair["rows"][2]["result"], '"two"')
 
+    def test_catalog_includes_every_record_without_guessing_duplicate_pairs(self):
+        self.write([{"id": "ok", "value": "원본"}, {"id": "source-only"}, {"id": "dup"}, {"id": "dup"}, {"bad": True}],
+                   [{"id": "ok", "value": "수정 문장"}, {"id": "result-only"}, {"id": "dup"}, {"bad": "결과"}])
+        data = self.load()
+        self.assertEqual(len(data.catalog), 8)
+        self.assertEqual(sum(e["source_index"] is not None for e in data.catalog), 5)
+        self.assertEqual(sum(e["incoming"] is not None for e in data.catalog), 4)
+        self.assertEqual(len(search_catalog(data, state="KEY 중복")), 3)
+        found = search_catalog(data, "수정 문장", "보완 JSON")
+        self.assertEqual(len(found), 1)
+        self.assertEqual(catalog_preview(data, found[0])["output"]["value"], "수정 문장")
+        self.assertEqual(search_catalog(data, "수정", "원본 JSON"), [])
+        self.assertEqual(len(search_catalog(data, "SOURCE.JSON", "파일명 / 위치")), 5)
+        self.assertEqual(len(search_catalog(data, "RESULT-ONLY", "KEY")), 1)
+        for index in search_catalog(data, state="KEY 중복"):
+            pair = catalog_preview(data, index)
+            self.assertEqual(pair["status"], "unpaired")
+            self.assertEqual(pair["output"], pair["source"])
+            self.assertFalse(pair["source"] is not None and pair["result"] is not None)
+
 
 class PairUiTests(unittest.TestCase):
     setUp = PairTests.setUp
@@ -182,15 +202,51 @@ class PairUiTests(unittest.TestCase):
         self.assertEqual(preview.pair["key"], 1)
         self.assertEqual(json.loads(preview.output_box.get("1.0", "end-1c")), {"id": 1, "value": 1})
         self.assertEqual(str(preview.output_box["state"]), "disabled")
-        self.assertEqual(preview.pair["example_total"], 2)
+        self.assertEqual(len(preview.cache.catalog), 3)
         with patch("label_porter.pair_preview_ui.load_preview", side_effect=AssertionError("cache missed")):
-            preview.next_button.invoke(); wait()
+            preview._next_example(); wait()
         self.assertEqual(preview.pair["key"], 2)
         # Closing the step before after_idle runs must not start a background read.
         with patch("label_porter.pair_preview_ui.load_preview") as load:
             unopened = PairPreview(root, self.config, str(self.source), [str(self.result)], configured=True)
             unopened.close(); root.update()
             load.assert_not_called()
+
+    def test_pagination_search_empty_results_refresh_and_stale_selection(self):
+        self.write([{"id": i, "value": "old"} for i in range(81)],
+                   [{"id": i, "value": f"보완 {i}"} for i in range(81)])
+        root = tk.Tk(); root.withdraw(); self.addCleanup(root.destroy)
+        preview = PairPreview(root, self.config, str(self.source), [str(self.result)], configured=True)
+        self.addCleanup(preview.close)
+        def wait(predicate):
+            deadline = time.monotonic() + 10
+            while not predicate() and time.monotonic() < deadline: root.update(); time.sleep(.01)
+            self.assertTrue(predicate(), preview.status.get())
+        wait(lambda: preview.pair is not None)
+        self.assertEqual(len(preview.table.get_children()), 25)
+        cache = preview.cache
+        with patch("label_porter.pair_preview_ui.load_preview", side_effect=AssertionError("reread")), \
+             patch("label_porter.pair_preview_ui.fingerprint", side_effect=AssertionError("rescan")):
+            preview._go_page(4); wait(lambda: preview.pair is not None and preview.pair["key"] == 75)
+            self.assertEqual(len(preview.table.get_children()), 6)
+            preview.query.set("보완 80"); preview.scope.set("보완 JSON")
+            wait(lambda: len(preview.filtered) == 1 and preview.pair is not None and preview.pair["key"] == 80)
+            self.assertEqual(preview.page, 1)
+            preview.query.set("없는문장")
+            wait(lambda: not preview.filtered and preview.pair is None)
+            self.assertEqual(preview.output_box.get("1.0", "end-1c"), "")
+            preview._reset_search(); wait(lambda: len(preview.filtered) == 81 and preview.pair is not None)
+            preview.page_size.set("50"); preview._go_page(1)
+            self.assertEqual(len(preview.table.get_children()), 50)
+            preview.page_number.set("999"); preview._jump_page()
+            self.assertEqual(preview.page, 2)
+            preview._select_index(79); preview._select_index(80)
+            wait(lambda: preview.pair is not None and preview.pair["key"] == 80)
+            self.assertIs(preview.cache, cache)
+        self.write([{"id": 0, "value": "old"}], [{"id": 0, "value": "new read"}])
+        preview.load_button.invoke()
+        wait(lambda: preview.cache is not None and preview.cache is not cache and preview.pair is not None)
+        self.assertEqual(preview.pair["output"]["value"], "new read")
 
     def test_async_load_cache_invalidation_and_close(self):
         self.write([{"id": 1, "value": 0}, {"id": 2, "value": 0}],

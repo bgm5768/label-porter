@@ -64,6 +64,13 @@ def self_test(output):
             app.primary_button.invoke()
             root.update()
             assert app.current_step == 3 and app.connection_confirmed
+            cached = editor.preview.cache
+            app._navigate(1); app._navigate(2); root.update()
+            assert app.mapping is editor and editor.preview.cache is cached
+            assert len(editor.preview.table.get_children()) == 1
+            assert [editor.preview.views.tab(tab, "text") for tab in editor.preview.views.tabs()] == [
+                "전체 데이터 목록", "실제 값 연결", "JSON 한 쌍 · 처리 후"]
+            app.primary_button.invoke()
             from label_porter.mapping import load_samples, preview_profile, import_profile, compile_profile
             for _, profile in app.profiles.values():
                 restored = import_profile(profile)
