@@ -98,7 +98,7 @@ def profile_connections(profile):
 
 class RuleReview:
     """Paired rows show only configured connections, with full JSON available on click."""
-    def __init__(self, parent, profile, on_continue, on_close, *, source_hint="", result_hints=()):
+    def __init__(self, parent, profile, on_continue, on_close, *, source_hint="", result_hints=(), configured=False):
         self.profile = copy.deepcopy(validate_config(profile))
         self.rows = profile_connections(self.profile)
         self.on_continue, self.on_close = on_continue, on_close
@@ -115,8 +115,8 @@ class RuleReview:
         note.pack(fill="x", pady=(0, 8))
         footer.bind("<Configure>", lambda e: note.configure(wraplength=max(280, e.width)))
         actions = ttk.Frame(footer); actions.pack(fill="x")
-        ttk.Button(actions, text="개요로 돌아가기", command=self._close).pack(side="left")
-        self.apply_button = ttk.Button(actions, text="연결 확인 완료 · 입력 선택 →", style="Primary.TButton", command=self._apply)
+        ttk.Button(actions, text="입력·저장 위치로" if configured else "개요로 돌아가기", command=self._close).pack(side="left")
+        self.apply_button = ttk.Button(actions, text="확인 완료 · 전체 검증 →" if configured else "연결 확인 완료 · 입력 선택 →", style="Primary.TButton", command=self._apply)
         self.apply_button.pack(side="right")
         self.pages = ttk.Notebook(self.window); self.pages.pack(fill="both", expand=True)
         visual, preview, raw = [ttk.Frame(self.pages, padding=10) for _ in range(3)]
@@ -148,7 +148,7 @@ class RuleReview:
         self.canvas.bind("<MouseWheel>", lambda e: self.canvas.yview_scroll(-1 if e.delta > 0 else 1, "units"))
         self.query.trace_add("write", self._filter)
         self.filter_kind.trace_add("write", self._filter)
-        self.preview = PairPreview(preview, self.profile, source_hint, result_hints)
+        self.preview = PairPreview(preview, self.profile, source_hint, result_hints, configured=configured)
         self.preview.pack(fill="both", expand=True)
         self.raw_box = self._box(raw); self._text(self.raw_box, json_text(self.profile))
         self._draw()

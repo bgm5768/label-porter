@@ -7,20 +7,22 @@ import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, scrolledtext, ttk
 
-from .pair_preview import display, fingerprint, load_preview, match_preview
+from .pair_preview import display, fingerprint, load_preview, match_preview, matching_indices
 from .ui import BG, INK, MUTED
 
 
 class PairPreview(ttk.Frame):
-    def __init__(self, parent, profile, source_hint="", result_hints=()):
+    def __init__(self, parent, profile, source_hint="", result_hints=(), *, configured=False):
         super().__init__(parent)
+        self.configured, self.example_index = configured, 0
+        self.auto_job = None
         self.profile, self.closed, self.busy = profile, False, False
         self.cache = self.pair = None
         self.generation = 0
         self.cancel_event = threading.Event()
         self.queue = queue.Queue()
         hint = Path(source_hint) if source_hint else None
-        self.source = tk.StringVar(value=str(hint) if hint and hint.is_file() else "")
+        self.source = tk.StringVar(value=str(hint) if hint and (configured or hint.is_file()) else "")
         self.root_path = tk.StringVar(value=str(hint if hint.is_dir() else hint.parent) if hint else "")
         self.results = list(result_hints)
         self.result_label = tk.StringVar(value=self._result_label())
@@ -32,30 +34,47 @@ class PairPreview(ttk.Frame):
         self.root_path.trace_add("write", lambda *_: self._invalidate())
         self.number.trace_add("write", lambda *_: self._invalidate(cache=False))
         self.poll_job = self.after(80, self._poll)
+        if configured:
+            self.auto_job = self.after_idle(self._autoload)
+
+    def _autoload(self):
+        self.auto_job = None
+        if not self.closed: self.load()
+
+    def _next_example(self):
+        self.example_index += 1
+        self.load()
 
     def _build(self):
         inputs = ttk.Frame(self); inputs.pack(fill="x")
         inputs.columnconfigure(1, weight=1)
         for row, label, variable, command in (
-            (0, "원본 JSON", self.source, self._choose_source),
+            (0, "원본 폴더" if self.configured else "원본 JSON", self.source, self._choose_source),
             (1, "플랫폼 / 보완 결과", self.result_label, self._choose_results),
         ):
             ttk.Label(inputs, text=label).grid(row=row, column=0, sticky="w", padx=(0, 8), pady=3)
             ttk.Entry(inputs, textvariable=variable, state="readonly").grid(row=row, column=1, sticky="ew", pady=3)
-            button = ttk.Button(inputs, text="파일 선택…", command=command)
-            button.grid(row=row, column=2, padx=(8, 0), pady=3)
-            self.controls.append(button)
+            if not self.configured:
+                button = ttk.Button(inputs, text="파일 선택…", command=command)
+                button.grid(row=row, column=2, padx=(8, 0), pady=3)
+                self.controls.append(button)
         source_key = self.profile["source"]["key"]
-        if isinstance(source_key, dict) and source_key.get("meta") == "relative_path":
+        if not self.configured and isinstance(source_key, dict) and source_key.get("meta") == "relative_path":
             ttk.Label(inputs, text="원본 기준 폴더").grid(row=2, column=0, sticky="w")
             ttk.Entry(inputs, textvariable=self.root_path, state="readonly").grid(row=2, column=1, sticky="ew")
             button = ttk.Button(inputs, text="폴더 선택…", command=self._choose_root)
             button.grid(row=2, column=2, padx=(8, 0)); self.controls.append(button)
         actions = ttk.Frame(self); actions.pack(fill="x", pady=6)
-        ttk.Label(actions, text="원본 항목").pack(side="left")
+        if not self.configured:
+            ttk.Label(actions, text="원본 항목").pack(side="left")
         self.spin = ttk.Spinbox(actions, from_=1, to=1, textvariable=self.number, width=7)
-        self.spin.pack(side="left", padx=8); self.controls.append(self.spin)
-        self.load_button = ttk.Button(actions, text="KEY로 한 쌍 불러오기", command=self.load)
+        if not self.configured: self.spin.pack(side="left", padx=8)
+        self.controls.append(self.spin)
+        if self.configured:
+            ttk.Label(actions, text="입력 단계의 데이터에서 자동 연결", foreground=MUTED).pack(side="left", padx=(0, 12))
+            self.next_button = ttk.Button(actions, text="다른 예시", command=self._next_example, state="disabled")
+            self.next_button.pack(side="left", padx=(0, 8))
+        self.load_button = ttk.Button(actions, text="다시 불러오기" if self.configured else "KEY로 한 쌍 불러오기", command=self.load)
         self.load_button.pack(side="left"); self.controls.append(self.load_button)
         self.cancel_button = ttk.Button(actions, text="중단", command=self.cancel, state="disabled")
         self.cancel_button.pack(side="left", padx=8)
@@ -114,6 +133,8 @@ class PairPreview(ttk.Frame):
         for control in self.controls:
             control.configure(state="disabled" if value else "normal")
         self.cancel_button.configure(state="normal" if value else "disabled")
+        if self.configured:
+            self.next_button.configure(state="disabled" if value or not self.pair or self.pair.get("example_total", 0) < 2 else "normal")
 
     def _invalidate(self, cache=True):
         self.cancel_event.set(); self.generation += 1
@@ -123,7 +144,8 @@ class PairPreview(ttk.Frame):
         self._set_busy(False)
         for box in self.json_boxes:
             self._text(box, "")
-        self.status.set("‘KEY로 한 쌍 불러오기’를 눌러 선택한 원본의 실제 값을 확인하세요.")
+        self.status.set("선택한 입력에서 같은 KEY의 예시를 자동으로 찾습니다." if self.configured else
+                        "‘KEY로 한 쌍 불러오기’를 눌러 선택한 원본의 실제 값을 확인하세요.")
         self._draw()
 
     def cancel(self):
@@ -146,6 +168,7 @@ class PairPreview(ttk.Frame):
         self._invalidate(cache=False)
         self.cancel_event = cancel = threading.Event()
         generation, cached = self.generation, self.cache
+        example_index = self.example_index
         source, results = self.source.get(), list(self.results)
         root = self.root_path.get() or str(Path(source).parent)
         self.status.set("원본과 보완 결과를 읽고 KEY를 확인하고 있습니다…")
@@ -154,13 +177,20 @@ class PairPreview(ttk.Frame):
             self.queue.put((generation, kind, value))
         def work():
             try:
-                stamp = fingerprint(source, results, root)
+                def checkpoint():
+                    if cancel.is_set(): raise ValueError("프리뷰 불러오기를 중단했습니다.")
+                stamp = fingerprint(source, results, root, self.profile["source"].get("glob", "**/*.json"), checkpoint) if cached else None
                 data = cached if cached and cached.fingerprint == stamp else load_preview(
                     self.profile, source, results, root, progress=lambda text: send("progress", text), cancel=cancel.is_set)
                 if cancel.is_set():
                     return
                 send("loaded", data)
-                pair = match_preview(data, index)
+                selected = matching_indices(data) if self.configured else []
+                if self.configured and not selected:
+                    raise ValueError("유일하게 연결되는 KEY가 없습니다. 필드 연결을 확인하거나 전체 검증에서 누락·중복 사유를 확인하세요.")
+                pair = match_preview(data, selected[example_index % len(selected)] if self.configured else index)
+                if self.configured:
+                    pair.update(example_position=example_index % len(selected) + 1, example_total=len(selected))
                 if not cancel.is_set():
                     send("pair", pair)
             except Exception as exc:
@@ -190,12 +220,14 @@ class PairPreview(ttk.Frame):
     def show_pair(self, pair):
         self.pair = pair
         extra = f" · KEY 해석 불가 {pair['invalid_result_keys']:,}건" if pair["invalid_result_keys"] else ""
-        self.status.set(f"KEY {display(pair['key'], 100)} · {pair['message']}{extra}\n"
+        example = f"예시 {pair['example_position']:,} / {pair['example_total']:,} · " if self.configured else ""
+        self.status.set(f"{example}KEY {display(pair['key'], 100)} · {pair['message']}{extra}\n"
                         f"{pair['source_location']} ↔ {pair['result_location']}\n"
                         "선택한 자료의 한 쌍 예시입니다. 실제 저장 전 전체 데이터를 검증하세요.")
         for box, name in zip(self.json_boxes, ("source", "result")):
             self._text(box, display(pair[name], 200000))
         self.canvas.yview_moveto(0); self._draw()
+        self._set_busy(False)
 
     def _draw(self):
         if self.closed:
@@ -262,5 +294,8 @@ class PairPreview(ttk.Frame):
         if self.closed:
             return
         self.closed = True; self.cancel_event.set(); self.generation += 1
+        if self.auto_job is not None:
+            self.after_cancel(self.auto_job)
+            self.auto_job = None
         self.after_cancel(self.poll_job)
         self.cache = self.pair = None

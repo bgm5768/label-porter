@@ -21,30 +21,19 @@ def self_test(output):
         root.update_idletasks()
         config = next(profile for path, profile in app.profiles.values() if path.stem == "generic")
         assert len(app.profiles) == 4
-        assert len(app.tabs.tabs()) == 3
-        assert len(app.steps.tabs()) == 3
+        assert len(app.tabs.tabs()) == 2
+        assert len(app.steps.tabs()) == 4
         assert str(app.steps.tab(1, "state")) == "disabled"
-        assert "AI 규칙 작성" in [app.tabs.tab(tab, "text") for tab in app.tabs.tabs()]
+        assert "AI 규칙 작성 가이드" in [app.tabs.tab(tab, "text") for tab in app.tabs.tabs()]
         assert "schema_version" in app.ai_guide_text
         assert app.ai_guide_box.get("1.0", "end-1c") == app.ai_guide_text
         assert app.help_box.get("1.0", "end-1c") == app.help_text
         assert all(text not in app.help_text for text in ("one_before", "one_after", "008", "013"))
         assert not hasattr(app, "assets_directory")
-        # Loaded rules can be confirmed without requiring sample files or a separate save.
         app._set_config(config)
-        app._wizard()
-        editor = app.mapping
-        assert editor.profile == config
-        assert [editor.pages.tab(tab, "text") for tab in editor.pages.tabs()] == ["필드 연결", "필드 연결 프리뷰", "규칙 JSON"]
-        assert all(str(box["state"]) == "disabled" for box in editor.preview.json_boxes)
-        assert editor.raw_box["state"] == "disabled"
-        assert not editor.canvas.bind("<B1-Motion>")
-        assert not editor.canvas.bind("<Delete>")
-        root.update()
-        editor.apply_button.invoke()
-        root.update()
+        app._advance_inputs()
         assert app.current_step == 1 and app.rule_ready
-        assert app.steps.index(app.steps.select()) == 1
+        assert not hasattr(app, 'editor') and not hasattr(app, '_new_project')
         with tempfile.TemporaryDirectory(prefix="label_porter_selftest_") as temp:
             base = Path(temp)
             source = base / "source"
@@ -52,6 +41,25 @@ def self_test(output):
             original = json.dumps({"id": "test", "label": "old", "metadata": {"keep": True}})
             (source / "one.json").write_text(original, encoding="utf-8")
             (base / "result.json").write_text(json.dumps({"source_id": "test", "corrected_label": "new"}), encoding="utf-8")
+            app.source.set(str(source)); app.result_paths = [str(base / "result.json")]
+            app.output.set(str(base / "output")); app._render_results()
+            app._wizard()
+            editor = app.mapping
+            assert editor.profile == config
+            assert [editor.pages.tab(tab, "text") for tab in editor.pages.tabs()] == ["필드 연결", "필드 연결 프리뷰", "규칙 JSON"]
+            assert all(str(box["state"]) == "disabled" for box in editor.preview.json_boxes)
+            assert editor.raw_box["state"] == "disabled"
+            assert not editor.canvas.bind("<B1-Motion>")
+            assert not editor.canvas.bind("<Delete>")
+            import time
+            deadline = time.monotonic() + 10
+            while editor.preview.pair is None and time.monotonic() < deadline:
+                root.update(); time.sleep(.01)
+            assert editor.preview.pair['key'] == 'test', editor.preview.status.get()
+            assert editor.preview.configured
+            editor.apply_button.invoke()
+            root.update()
+            assert app.current_step == 3 and app.connection_confirmed
             from label_porter.mapping import load_samples, preview_profile, import_profile, compile_profile
             for _, profile in app.profiles.values():
                 restored = import_profile(profile)
@@ -102,7 +110,7 @@ def self_test(output):
                                                 rebuild_profile, {})
             assert state == "updated" and rebuilt["items"] == [{"id": 1, "text": "new"}, {"id": 2, "text": "added"}]
         root.destroy()
-        Path(output).write_text(json.dumps({"ok": True, "tk": True, "profiles": 4, "engine": True, "original_preserved": True, "split_output": True, "date_sequence": True, "reusable_preview": True, "media_feature_removed": True, "ai_guide_bundled": True, "general_project_help": True, "three_step_workflow": True, "ai_rule_roundtrip": True, "multiple_sample_files": True, "per_file_identity": True, "ai_first_workflow": True, "readonly_field_review": True, "automatic_next_step": True}), encoding="utf-8")
+        Path(output).write_text(json.dumps({"ok": True, "tk": True, "profiles": 4, "engine": True, "original_preserved": True, "split_output": True, "date_sequence": True, "reusable_preview": True, "media_feature_removed": True, "ai_guide_bundled": True, "general_project_help": True, "four_step_workflow": True, "automatic_data_preview": True, "ai_rule_roundtrip": True, "multiple_sample_files": True, "per_file_identity": True, "ai_first_workflow": True, "readonly_field_review": True, "automatic_next_step": True}), encoding="utf-8")
         return 0
     except Exception:
         Path(output).write_text(json.dumps({"ok": False, "error": traceback.format_exc()}), encoding="utf-8")

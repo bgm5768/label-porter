@@ -136,9 +136,8 @@ class Workflow:
         self.report_button.configure(state="disabled")
         self.folder_button.configure(state="disabled")
         self.cancel_button.configure(state="normal")
-        self.steps.select(2)
-        self.steps.tab(0, state="disabled")
-        self.steps.tab(1, state="disabled")
+        self.steps.select(self.review_step)
+        for index in range(self.review_step): self.steps.tab(index, state="disabled")
         self.status.set("검증 미리보기를 시작합니다." if preview else "새 복사본에 반영을 시작합니다.")
         self._append_log(f"\n{'미리보기' if preview else '복사본 반영'} · {config['name']}\n원본: {source}\n")
         def work():

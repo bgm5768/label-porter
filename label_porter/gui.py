@@ -12,7 +12,6 @@ from tkinter import filedialog, font, scrolledtext, ttk
 
 from . import __version__
 from .config import load_config, validate_config
-from .formats import parse_json
 from .rule_review import RuleReview, profile_connections
 from .reports import STATUS, ISSUES
 from .ui import INK, MUTED, ScrollPage, card, setup_style
@@ -31,14 +30,16 @@ class App(Workflow):
         self.cancel_event = threading.Event()
         self.running = self.rule_ready = False
         self.preview_fingerprint = self.active_fingerprint = None
-        self.mapping_source = self.mapping_result = ""
+        self.review_step = 3
+        self.connection_confirmed = False
         self.mapping = None
         self.last_run = self.last_summary = None
         self.result_paths = []
         self.current_step, self.route = 0, "workflow"
         self.source, self.output = tk.StringVar(), tk.StringVar()
         self.split_output = tk.BooleanVar(value=True)
-        self.status = tk.StringVar(value="AI에게 원본 라벨·플랫폼 결과·MD 가이드를 전달한 뒤 받은 규칙을 불러오세요.")
+        self.status = tk.StringVar(value="규칙 JSON 파일을 불러오면 입력·저장 위치 선택으로 이동합니다.")
+        self.rule_file = tk.StringVar(value="아직 불러온 파일이 없습니다.")
         self.rule_summary = tk.StringVar(value="아직 프로젝트 규칙이 없습니다.")
         self.rule_title = tk.StringVar(value="규칙을 준비해 주세요")
         self.run_summary, self.profile_name, self.description = tk.StringVar(), tk.StringVar(), tk.StringVar()
@@ -61,9 +62,8 @@ class App(Workflow):
         self.toolbar = ttk.Frame(self.root, style="Toolbar.TFrame", padding=(16, 8))
         self.toolbar.pack(side="top", fill="x")
         self.toolbar_buttons = []
-        for label, command in (("＋ 새 프로젝트", self._new_project),
-                               ("AI 규칙 작성 가이드", lambda: self._show_tools(0)),
-                               ("사용 방법", lambda: self._show_tools(2))):
+        for label, command in (("AI 규칙 작성 가이드", lambda: self._show_tools(0)),
+                               ("사용 방법", lambda: self._show_tools(1))):
             button = ttk.Button(self.toolbar, text=label, command=command, style="Toolbar.TButton")
             button.pack(side="left", padx=(0, 6))
             self.toolbar_buttons.append(button)
@@ -73,13 +73,13 @@ class App(Workflow):
         workspace = ttk.Frame(self.root)
         workspace.pack(fill="both", expand=True)
         menu_font = font.Font(self.root, family="맑은 고딕", size=11, weight="bold")
-        sidebar = tk.Frame(workspace, bg="#edf0f4", width=max(200, menu_font.measure("3   검증·복사본 저장")+46))
+        sidebar = tk.Frame(workspace, bg="#edf0f4", width=max(200, menu_font.measure("4   검증·복사본 저장")+46))
         sidebar.pack(side="left", fill="y")
         sidebar.pack_propagate(False)
         tk.Label(sidebar, text="라벨 포터", bg="#edf0f4", fg=INK, font=("맑은 고딕", 19, "bold")).pack(anchor="w", padx=22, pady=(28, 4))
-        tk.Label(sidebar, text="플랫폼 결과 → 원본 라벨", bg="#edf0f4", fg=MUTED, font=("맑은 고딕", 9)).pack(anchor="w", padx=22, pady=(0, 30))
+        tk.Label(sidebar, text="규칙 → 데이터 → 확인 → 저장", bg="#edf0f4", fg=MUTED, font=("맑은 고딕", 9)).pack(anchor="w", padx=22, pady=(0, 30))
         self.nav_buttons = []
-        for i, title in enumerate(("1   프로젝트 규칙", "2   입력·저장 위치", "3   검증·복사본 저장")):
+        for i, title in enumerate(("1   규칙 불러오기", "2   입력·저장 위치", "3   필드 연결 확인", "4   검증·복사본 저장")):
             b = tk.Button(sidebar, text=title, anchor="w", padx=12, pady=16, bd=0,
                           bg="#edf0f4", fg=MUTED, activebackground="#e0e5ec", activeforeground=INK,
                           font=("맑은 고딕", 11, "bold"), command=lambda i=i: self._navigate(i))
@@ -112,29 +112,27 @@ class App(Workflow):
         self.content.pack(fill="both", expand=True)
         self.steps = ttk.Notebook(self.content, style="Flow.TNotebook")
         self.steps.pack(fill="both", expand=True)
-        self.step_pages = [ScrollPage(self.steps) for _ in range(3)]
+        self.step_pages = [ScrollPage(self.steps) for _ in range(4)]
         for i, page in enumerate(self.step_pages):
             self.steps.add(page, text=str(i+1), state="normal" if i == 0 else "disabled")
-        project, inputs, review = [p.body for p in self.step_pages]
-        group = card(project, "01  AI에게 가이드와 데이터 전달", "원본 라벨 · 플랫폼 최종 결과 · 작성 가이드를 AI에게 전달해 규칙 작성을 요청하세요.")
-        row = ttk.Frame(group, style="Card.TFrame"); row.pack(fill="x")
-        ttk.Button(row, text="가이드 복사", command=self._copy_ai_guide).pack(side="left")
-        ttk.Button(row, text="MD 파일 저장", command=self._save_ai_guide).pack(side="left", padx=8)
-        group = card(project, "02  AI가 만든 규칙 가져오기", "JSON 파일을 열거나 AI 답변의 JSON을 붙여넣으세요. 가져오면 필드 연결 확인 화면이 열립니다.")
-        row = ttk.Frame(group, style="Card.TFrame"); row.pack(fill="x")
-        self.import_rule_button = ttk.Button(row, text="규칙 파일 열기…", command=self._load_profile)
+        project, inputs, _, review = [p.body for p in self.step_pages]
+        group = card(project, "프로젝트 규칙", "AI가 만든 규칙 JSON 파일을 불러오세요. 다음 단계에서 실제 처리할 데이터와 저장 위치를 선택합니다.")
+        row = ttk.Frame(group, style="Card.TFrame"); row.pack(fill="x", pady=(2, 12))
+        self.import_rule_button = ttk.Button(row, text="규칙 파일 불러오기…", command=self._load_profile, style="Primary.TButton")
         self.import_rule_button.pack(side="left")
-        self.paste_rule_button = ttk.Button(row, text="JSON 붙여넣기…", command=lambda: self._show_tools(1))
-        self.paste_rule_button.pack(side="left", padx=8)
-        group = card(project, "현재 규칙")
-        ttk.Label(group, textvariable=self.rule_title, style="CardTitle.TLabel").pack(anchor="w", pady=(12, 8))
+        ttk.Label(group, textvariable=self.rule_file, style="CardMuted.TLabel", wraplength=700).pack(fill="x")
+        group = card(project, "불러온 규칙")
+        ttk.Label(group, textvariable=self.rule_title, style="CardTitle.TLabel").pack(anchor="w", pady=(8, 8))
         ttk.Label(group, textvariable=self.rule_summary, style="CardMuted.TLabel", wraplength=720).pack(fill="x")
-        row = ttk.Frame(group, style="Card.TFrame"); row.pack(fill="x", pady=(12, 0))
-        self.edit_rule_button = ttk.Button(row, text="필드 연결 확인", command=self._wizard, state="disabled")
-        self.edit_rule_button.pack(side="left")
-        self.save_rule_button = ttk.Button(row, text="규칙 내보내기", command=self._save_profile, state="disabled")
-        self.save_rule_button.pack(side="left", padx=8)
-        ttk.Label(project, text="연결 확인 화면은 읽기 전용입니다. 수정이 필요하면 AI에 현재 규칙과 변경 내용을 전달해 새 규칙을 받아 불러오세요.", style="Muted.TLabel", wraplength=720).pack(anchor="w", pady=5)
+        self.save_rule_button = ttk.Button(group, text="규칙 내보내기", command=self._save_profile, state="disabled")
+        self.save_rule_button.pack(anchor="w", pady=(14, 0))
+        group = card(project, "이후 진행 순서")
+        for title, explanation in (("02  데이터 선택", "원본 폴더 · 플랫폼/보완 파일 · 저장 위치를 한 번 선택합니다."),
+                                   ("03  연결과 프리뷰 확인", "같은 KEY의 데이터 예시를 자동으로 찾아 연결과 실제 값을 보여줍니다."),
+                                   ("04  전체 검증과 저장", "전체 처리 결과서를 확인한 뒤 원본을 보존하는 복사본을 저장합니다.")):
+            ttk.Label(group, text=title, style="CardTitle.TLabel").pack(anchor="w", pady=(10, 3))
+            ttk.Label(group, text=explanation, style="CardMuted.TLabel", wraplength=700).pack(fill="x")
+        ttk.Label(project, text="규칙 작성이 필요하면 상단 ‘AI 규칙 작성 가이드’를 이용하세요. 불러온 규칙은 읽기 전용으로 확인합니다.", style="Muted.TLabel", wraplength=720).pack(fill="x", pady=4)
         ttk.Label(inputs, textvariable=self.input_hint, wraplength=760, foreground="#245eb7").pack(fill="x", pady=(0, 14))
         group = card(inputs, "1. 보완 전 원본 라벨 폴더", "여러 개별 JSON 또는 여러 건을 담은 통합 JSON 모두 가능합니다. 하위 폴더도 포함합니다.")
         self._path_row(group, self.source, self._choose_source)
@@ -176,21 +174,21 @@ class App(Workflow):
         ttk.Label(review, text="진행 기록", style="Muted.TLabel").pack(anchor="w")
         self.log = scrolledtext.ScrolledText(review, wrap="word", height=5, font=("맑은 고딕", 9), state="disabled", relief="flat", foreground=MUTED)
         self.log.pack(fill="x", pady=(6, 0))
-        self.mapping_host, self.tools_host = ttk.Frame(self.content), ttk.Frame(self.content)
-        self.tabs = ttk.Notebook(self.tools_host); self.tabs.pack(fill="both", expand=True)
-        ai, rule, help_page = [ttk.Frame(self.tabs, padding=12) for _ in range(3)]
-        for f, title in ((ai, "AI 규칙 작성"), (rule, "규칙 JSON 붙여넣기"), (help_page, "사용 방법")):
-            self.tabs.add(f, text=title)
+        self.mapping_host = ttk.Frame(self.content)
+        # One reusable help window keeps documentation out of the workflow pages.
+        self.help_window = tk.Toplevel(self.root)
+        self.help_window.withdraw()
+        self.help_window.title("라벨 포터 · 도움말")
+        self.help_window.geometry("920x740")
+        self.help_window.transient(self.root)
+        self.help_window.protocol("WM_DELETE_WINDOW", self.help_window.withdraw)
+        self.tabs = ttk.Notebook(self.help_window); self.tabs.pack(fill="both", expand=True, padx=16, pady=16)
+        ai, help_page = [ttk.Frame(self.tabs, padding=12) for _ in range(2)]
+        self.tabs.add(ai, text="AI 규칙 작성 가이드"); self.tabs.add(help_page, text="사용 방법")
         row = ttk.Frame(ai); row.pack(fill="x", pady=(0, 12))
-        ttk.Button(row, text="가이드 전체 복사", command=self._copy_ai_guide).pack(side="left")
-        ttk.Button(row, text="MD 파일로 저장", command=self._save_ai_guide).pack(side="left", padx=8)
-        ttk.Button(row, text="받은 규칙 불러오기", command=self._load_profile).pack(side="right")
+        ttk.Button(row, text="가이드 복사", command=self._copy_ai_guide).pack(side="left")
+        ttk.Button(row, text="MD 파일 저장", command=self._save_ai_guide).pack(side="left", padx=8)
         self.ai_guide_box = self._document_view(ai, self.ai_guide_text)
-        ttk.Label(rule, text="AI가 반환한 JSON 전체를 붙여 넣고 ‘JSON 적용’을 누르세요. 적용하면 필드 연결 확인 화면이 열립니다.", wraplength=760).pack(anchor="w", pady=(0, 10))
-        row = ttk.Frame(rule); row.pack(side="bottom", fill="x", pady=(10, 0))
-        ttk.Button(row, text="JSON 적용", command=self._apply_json, style="Primary.TButton").pack(side="right")
-        ttk.Button(row, text="문법 검사", command=self._check_config).pack(side="left")
-        self.editor = scrolledtext.ScrolledText(rule, wrap="none", undo=True, font=("Consolas", 10), relief="flat"); self.editor.pack(fill="both", expand=True)
         self.help_box = self._document_view(help_page, self.help_text)
 
     @staticmethod
@@ -213,79 +211,77 @@ class App(Workflow):
         ttk.Button(row, text="폴더 선택", command=command).pack(side="right", padx=(10, 0))
         ttk.Entry(row, textvariable=variable).pack(fill="x", expand=True)
 
+    def _close_mapping(self):
+        if self.mapping and not self.mapping.closed:
+            self.mapping._close(notify=False)
+        self.mapping = None
+
     def _show_step(self, index):
+        if index == 2:
+            self._wizard()
+            return
+        self._close_mapping()
         self.route, self.current_step = "workflow", index
-        self.mapping_host.pack_forget(); self.tools_host.pack_forget()
-        self.steps.pack(fill="both", expand=True); self.steps.select(index)
+        self.mapping_host.pack_forget()
+        self.steps.pack(fill="both", expand=True); self.steps.tab(index, state="normal"); self.steps.select(index)
         self.footer.pack(side="bottom", fill="x", before=self.content)
-        self.page_title.set(("AI 규칙 준비와 확인", "입력과 저장 위치 확인", "검증 후 복사본 저장")[index])
-        self.page_caption.set(("AI가 규칙을 작성하고, 사용자는 연결과 적용 조건을 확인합니다.", "실제로 처리할 전체 범위와 저장 위치를 확인하세요.", "결과가 없는 원본은 유지합니다. 변경·미변경과 검토 사유를 함께 확인하세요.")[index])
-        for i, b in enumerate(self.nav_buttons):
-            b.configure(bg="#dfe5ed" if i == index else "#edf0f4", fg=INK if i == index else MUTED)
+        self.page_title.set(("프로젝트 규칙 불러오기", "입력 데이터와 저장 위치", "필드 연결 확인", "전체 검증과 복사본 저장")[index])
+        self.page_caption.set(("규칙 파일을 불러오면 데이터 선택 단계로 이어집니다.",
+                               "여기서 선택한 데이터를 다음 단계의 프리뷰와 전체 처리에 함께 사용합니다.", "",
+                               "전체 데이터를 검증하고 처리 결과서를 확인한 뒤 복사본을 저장하세요.")[index])
         self._sync_actions()
 
     def _sync_actions(self):
-        self.back_button.configure(text="작업으로 돌아가기" if self.route == "tools" else "규칙 개요로 돌아가기" if self.route == "mapping" else "이전 단계",
-                                   state="disabled" if self.running or (self.route == "workflow" and self.current_step == 0) else "normal")
+        self.back_button.configure(text="이전 단계", state="disabled" if self.running or self.current_step == 0 else "normal")
         self.cancel_button.configure(state="normal" if self.running and not self.cancel_event.is_set() else "disabled")
         for button in (self.primary_button, self.cancel_button, self.report_button, self.folder_button):
             button.pack_forget()
-        for b in self.nav_buttons: b.configure(state="disabled" if self.running else "normal")
-        for b in self.toolbar_buttons:
-            b.configure(state="disabled" if self.running or self.route == "mapping" else "normal")
-        if self.route != "workflow":
-            return
+        for i, b in enumerate(self.nav_buttons):
+            b.configure(state="disabled" if self.running or (i > 0 and not self.rule_ready) else "normal",
+                        bg="#dfe5ed" if i == self.current_step else "#edf0f4", fg=INK if i == self.current_step else MUTED)
+        for b in self.toolbar_buttons: b.configure(state="disabled" if self.running else "normal")
+        if self.route != "workflow": return
         self.primary_button.pack(side="right")
-        if self.running:
-            self.cancel_button.pack(side="right", padx=8)
-        if self.current_step == 2:
-            self.report_button.pack(side="left", padx=8)
-            self.folder_button.pack(side="left")
-        title = ("필드 연결 확인 →", "입력 확인 · 검증으로 →", "복사본 저장" if self.preview_fingerprint else "전체 데이터 검증")[self.current_step]
-        if self.current_step == 2 and self._saved(): title = "저장 완료 · 결과 폴더 열기"
-        enabled = not self.running and (self.current_step != 0 or bool(self._config_text))
-        self.primary_button.configure(text=title, state="normal" if enabled else "disabled")
+        if self.running: self.cancel_button.pack(side="right", padx=8)
+        if self.current_step == self.review_step:
+            self.report_button.pack(side="left", padx=8); self.folder_button.pack(side="left")
+        title = ("입력 데이터 선택 →", "필드 연결·프리뷰 확인 →", "전체 검증으로 →",
+                 "복사본 저장" if self.preview_fingerprint else "전체 데이터 검증")[self.current_step]
+        if self.current_step == self.review_step and self._saved(): title = "저장 완료 · 결과 폴더 열기"
+        self.primary_button.configure(text=title, state="normal" if not self.running and self.rule_ready else "disabled")
 
     def _saved(self):
         return self.last_summary and not self.last_summary.get("preview") and self.last_summary["status"].startswith("completed")
 
     def _navigate(self, index):
         if self.running: return
-        if self.route == "mapping":
-            self.status.set("아래 ‘연결 확인 완료’를 누르면 입력 선택으로 이동합니다."); return
         if index == 0: self._show_step(0)
-        elif index == 1:
-            self._advance_inputs() if self.rule_ready else self._wizard()
-        elif self.rule_ready: self._advance_review()
-        else: self.status.set("먼저 프로젝트 규칙을 만들고 확정해 주세요.")
+        elif index == 1: self._advance_inputs()
+        elif index == 2: self._wizard()
+        elif self.route == "mapping" and self.mapping:
+            self.mapping.apply_button.invoke()
+        else: self._advance_review()
 
     def _primary(self):
-        if self.current_step == 0: self._wizard()
-        elif self.current_step == 1: self._advance_review()
+        if self.current_step == 0: self._advance_inputs()
+        elif self.current_step == 1: self._wizard()
         elif self._saved(): self._open_folder()
         else: self._start(self.preview_fingerprint is None)
 
     def _back(self):
         if self.running: return
-        if self.route == "mapping" and self.mapping:
-            self.mapping._close(); self.mapping = None
-        self._show_step(self.current_step if self.route == "tools" else max(0, self.current_step-1))
+        self._show_step(max(0, self.current_step - 1))
 
     def _show_tools(self, tab):
-        if self.running or self.route == "mapping":
-            self.status.set("연결 확인 화면을 닫거나 실행을 마친 뒤 가이드를 열어 주세요."); return
-        self.route = "tools"; self.steps.pack_forget(); self.tools_host.pack(fill="both", expand=True); self.tabs.select(tab)
-        self.page_title.set("AI 가이드와 규칙 가져오기")
-        self.page_caption.set("AI는 외부에서 규칙을 작성합니다. 프로그램은 로컬 파일만 처리합니다.")
-        self._sync_actions()
+        self.tabs.select(tab)
+        self.help_window.deiconify(); self.help_window.lift()
 
     def _set_config(self, config):
         config = validate_config(config)
         self._config_text = json.dumps(config, ensure_ascii=False, indent=2)
-        self.editor.delete("1.0", "end"); self.editor.insert("1.0", self._config_text); self.editor.edit_modified(False)
         self.profile_name.set(config["name"]); self.description.set(config.get("description", ""))
         self._invalidate_rule(); self._summarize_rule(config)
-        self.edit_rule_button.configure(state="normal"); self.save_rule_button.configure(state="normal")
+        self.save_rule_button.configure(state="normal")
         self._sync_actions()
         if self.route == "workflow":
             self._show_step(0)
@@ -294,27 +290,14 @@ class App(Workflow):
         if not self._config_text: raise ValueError("프로젝트 규칙을 먼저 만들거나 불러오세요.")
         return validate_config(json.loads(self._config_text))
 
-    def _draft_config(self):
-        docs = parse_json(self.editor.get("1.0", "end"))
-        if len(docs) != 1: raise ValueError("규칙은 JSON 객체 하나여야 합니다.")
-        return validate_config(docs[0])
-
-    def _apply_json(self):
-        try:
-            self._set_config(self._draft_config()); self._show_step(0); self._wizard()
-        except (ValueError, TypeError, KeyError) as exc: self.status.set(f"JSON 확인: {exc}")
-
-    def _check_config(self):
-        try: self.status.set(f"문법 확인 완료: {self._draft_config()['name']} · ‘JSON 적용’을 눌러 반영하세요.")
-        except (ValueError, TypeError, KeyError) as exc: self.status.set(f"규칙 확인: {exc}")
-
     def _summarize_rule(self, config):
         self.rule_title.set(config["name"])
         checks = sum(len(config.get(k, [])) for k in ("include_when", "checks", "assertions"))
         connections = profile_connections(config)
-        self.rule_summary.set(f"수정 필드 {sum(r['kind']=='field' for r in connections)}개 · 목록 {sum(r['kind']=='items' for r in connections)}개 · 레코드 조건 / 검증 {checks}개\n원본 대상: {config['source'].get('glob', '**/*.json')}\n‘필드 연결 확인’에서 기준·수정값·목록·검사를 구분해 볼 수 있습니다.")
+        self.rule_summary.set(f"수정 필드 {sum(r['kind']=='field' for r in connections)}개 · 목록 {sum(r['kind'] in ('items', 'rebuild_items') for r in connections)}개 · 레코드 조건 / 검증 {checks}개\n원본 대상: {config['source'].get('glob', '**/*.json')}\n데이터를 선택한 뒤 3단계에서 필드 연결과 실제 예시를 확인합니다.")
 
     def _invalidate_preview(self):
+        self.connection_confirmed = False
         self.preview_fingerprint = self.last_summary = None
         for var in self.metric_values.values(): var.set("—")
         self.status_table.delete(*self.status_table.get_children())
@@ -323,26 +306,29 @@ class App(Workflow):
         self._sync_actions()
 
     def _invalidate_rule(self):
-        self.rule_ready = False; self._invalidate_preview()
-        self.steps.tab(1, state="disabled"); self.steps.tab(2, state="disabled")
+        self.rule_ready = bool(self._config_text); self._invalidate_preview()
+        self.steps.tab(1, state="normal" if self.rule_ready else "disabled")
+        self.steps.tab(2, state="disabled"); self.steps.tab(3, state="disabled")
 
     def _advance_inputs(self):
         if self.running: return
         try:
             self._summarize_rule(self._get_config()); self.rule_ready = True
             self.steps.tab(1, state="normal"); self._show_step(1)
-            self.status.set("규칙이 확정되었습니다. 전체 입력 범위와 저장 위치를 확인하세요."); self._save_settings()
+            self.status.set("규칙을 불러왔습니다. 원본 폴더·보완 파일·저장 위치를 선택하세요."); self._save_settings()
         except (ValueError, TypeError, KeyError) as exc: self.status.set(f"규칙 확인: {exc}")
 
     def _advance_review(self):
         if self.running: return
+        if not self.connection_confirmed:
+            self._wizard(); return
         try:
             self._check_inputs()
             pattern = self._get_config()["source"].get("glob", "**/*.json")
             if not any(p.is_file() for p in Path(self.source.get()).glob(pattern)):
                 raise ValueError(f"원본 폴더에서 대상 패턴 ‘{pattern}’에 맞는 파일을 찾지 못했습니다.")
             self.run_summary.set(f"규칙  {self._get_config()['name']}\n원본  {self.source.get()}\n결과  {len(self.result_paths):,}개 파일\n저장  {self.output.get()}\n분리  {'변경 / 미변경 / examine' if self.split_output.get() else '전체 복사본 + examine'}")
-            self.steps.tab(2, state="normal"); self._show_step(2)
+            self.steps.tab(3, state="normal"); self._show_step(3)
             self.status.set("전체 데이터 검증 후 집계와 보고서를 확인하세요."); self._save_settings()
         except (ValueError, OSError) as exc: self.status.set(f"입력 확인: {exc}")
 
@@ -352,9 +338,11 @@ class App(Workflow):
         if path:
             try:
                 config = load_config(Path(path))
-                self._new_project()
+                self._close_mapping()
+                self.source.set(""); self.output.set(""); self.result_paths = []; self._render_results()
                 self._set_config(config)
-                self._wizard()
+                self.rule_file.set(str(Path(path)))
+                self._advance_inputs()
             except (OSError, ValueError, TypeError, KeyError) as exc: self.status.set(f"규칙 불러오기: {exc}")
 
     def _save_profile(self):
@@ -370,36 +358,29 @@ class App(Workflow):
 
     def _wizard(self):
         if self.running or (self.mapping and not self.mapping.closed): return
-        try: config = self._get_config()
-        except (ValueError, TypeError, KeyError) as exc: self.status.set(str(exc)); return
-        self.current_step, self.route = 0, "mapping"
-        self.steps.pack_forget(); self.tools_host.pack_forget(); self.mapping_host.pack(fill="both", expand=True)
-        self.page_title.set("AI 규칙 · 필드 연결 확인")
-        self.page_caption.set(config["name"] + " · 읽기 전용 · 한 쌍 프리뷰 확인 가능 · 전체 데이터 검증은 다음 단계에서 진행합니다.")
-        self._sync_actions()
-        self.footer.pack_forget()
+        try:
+            config = self._get_config()
+            self._check_inputs()
+            if not any(p.is_file() for p in Path(self.source.get()).glob(config["source"].get("glob", "**/*.json"))):
+                raise ValueError("규칙의 파일 패턴에 맞는 원본 JSON이 없습니다.")
+        except (OSError, ValueError, TypeError, KeyError) as exc:
+            if self.rule_ready: self._show_step(1)
+            self.status.set(f"입력 확인: {exc}"); return
+        self._save_settings()
+        self.current_step, self.route = 2, "mapping"
+        self.steps.tab(2, state="normal"); self.steps.select(2); self.steps.pack_forget()
+        self.mapping_host.pack(fill="both", expand=True)
+        self.page_title.set("필드 연결과 실제 값 확인")
+        self.page_caption.set("선택한 데이터에서 KEY가 같은 예시를 자동으로 불러옵니다. 규칙과 원본은 수정하지 않습니다.")
+        self._sync_actions(); self.footer.pack_forget()
         self.mapping = RuleReview(self.mapping_host, config, self._finish_mapping,
-                                  lambda: self._show_step(0), source_hint=self.source.get(), result_hints=self.result_paths)
+                                  lambda: self._show_step(1), source_hint=self.source.get(),
+                                  result_hints=self.result_paths, configured=True)
 
     def _finish_mapping(self):
-        self.mapping = None; self._advance_inputs()
-
-    def _new_project(self):
-        if self.running or self.route == "mapping":
-            self.status.set("연결 확인 화면을 닫거나 실행을 마친 뒤 새 프로젝트를 시작하세요.")
-            return
-        self._config_text = ""
-        self.editor.delete("1.0", "end")
-        self.mapping_source = self.mapping_result = ""
-        self.source.set(""); self.output.set(""); self.result_paths = []; self._render_results()
-        self.rule_ready = False
-        self.steps.tab(1, state="disabled"); self.steps.tab(2, state="disabled")
-        self.rule_title.set("규칙을 준비해 주세요"); self.rule_summary.set("아직 프로젝트 규칙이 없습니다.")
-        self.edit_rule_button.configure(state="disabled"); self.save_rule_button.configure(state="disabled")
-        self.input_hint.set("실제로 처리할 전체 원본 폴더와 결과 파일을 지정하세요.")
-        self.last_run = None
-        self._show_step(0)
-        self.status.set("새 프로젝트를 시작합니다. 기존 데이터와 결과 폴더는 유지됩니다.")
+        self.mapping = None
+        self.connection_confirmed = True
+        self._advance_review()
 
     def _fingerprint(self):
         base = super()._fingerprint()
@@ -415,6 +396,8 @@ class App(Workflow):
                     self._invalidate_preview(); self.status.set("규칙 또는 입력 파일이 바뀌었습니다. 전체 데이터 검증을 다시 실행하세요."); return
             except (OSError, ValueError) as exc: self.status.set(str(exc)); return
         self.last_summary = None
+        if not self.connection_confirmed:
+            self._wizard(); return
         super()._start(preview)
         self._sync_actions()
 
@@ -449,7 +432,8 @@ class App(Workflow):
                     self.progress.configure(value=100*payload["done"]/payload["total"] if payload["total"] else 0)
                     self._append_log(payload["message"]); continue
                 self.running = False; self.preview_button.configure(state="normal")
-                self.steps.tab(0, state="normal"); self.steps.tab(1, state="normal")
+
+                for i in range(4): self.steps.tab(i, state="normal")
                 if kind == "error":
                     self.status.set("실행하지 못했습니다: "+payload); self.review_note.set("실행 실패 · 입력과 규칙을 확인하고 다시 검증하세요."); self._append_log(payload)
                 else:
@@ -470,16 +454,16 @@ class App(Workflow):
             s = json.loads(self.settings_path.read_text(encoding="utf-8"))
             self.source.set(s.get("source", "")); self.output.set(s.get("output", "")); self.split_output.set(s.get("split_output", True))
             self.result_paths = [p for p in s.get("results", []) if Path(p).is_file()]; self._render_results()
-            self.mapping_source, self.mapping_result = s.get("mapping_source", ""), s.get("mapping_result", "")
             if s.get("config"): self._set_config(s["config"])
             elif s.get("profile") in self.profiles: self._set_config(self.profiles[s["profile"]][1])
+            self.rule_file.set(s.get("rule_file", "최근 저장한 프로젝트 규칙"))
             if self._config_text: self.status.set("최근 작업의 규칙과 입력 위치를 복원했습니다. 확인 후 계속하세요.")
         except (OSError, ValueError, TypeError, KeyError): pass
 
     def _save_settings(self):
         try:
             s = {"source": self.source.get(), "output": self.output.get(), "results": self.result_paths, "split_output": self.split_output.get(),
-                 "mapping_source": self.mapping_source, "mapping_result": self.mapping_result, "config": self._get_config() if self._config_text else None}
+                 "rule_file": self.rule_file.get(), "config": self._get_config() if self._config_text else None}
             self.settings_path.parent.mkdir(parents=True, exist_ok=True)
             temp = self.settings_path.with_suffix(".tmp"); temp.write_text(json.dumps(s, ensure_ascii=False), encoding="utf-8"); os.replace(temp, self.settings_path)
         except (OSError, ValueError, TypeError): pass

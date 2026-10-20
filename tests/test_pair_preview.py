@@ -9,7 +9,7 @@ from unittest.mock import patch
 
 from label_porter.config import validate_config
 from label_porter.formats import DataError
-from label_porter.pair_preview import load_preview, match_preview
+from label_porter.pair_preview import load_preview, match_preview, matching_indices
 from label_porter.pair_preview_ui import PairPreview
 from label_porter.rules import apply_record
 
@@ -70,6 +70,29 @@ class PairTests(unittest.TestCase):
         other.write_bytes(self.result.read_bytes())
         with self.assertRaisesRegex(DataError, "2건"):
             match_preview(load_preview(self.config, self.source, [self.result, other]))
+
+    def test_directory_preview_checks_global_uniqueness_and_source_glob(self):
+        folder = self.base / "originals"; folder.mkdir()
+        for name, key in (("0", "missing"), ("1", "duplicate"), ("2", "duplicate"), ("3", "valid")):
+            (folder / (name + ".json")).write_text(json.dumps({"id": key, "value": 0}), encoding="utf-8")
+        (folder / "skip.txt").write_text("not JSON", encoding="utf-8")
+        self.result.write_text(json.dumps([{"id": "duplicate", "value": 9}, {"id": "valid", "value": 2}]), encoding="utf-8")
+        data = load_preview(self.config, folder, [self.result])
+        self.assertEqual(matching_indices(data), [3])
+        self.assertEqual(match_preview(data, 3)["candidate"]["value"], 2)
+        with self.assertRaisesRegex(DataError, "같은 KEY"):
+            match_preview(data, 1)
+        self.config["source"]["glob"] = "3.json"
+        self.assertEqual(matching_indices(load_preview(self.config, folder, [self.result])), [0])
+
+    def test_directory_relative_path_metadata_in_nested_files(self):
+        folder = self.base / "originals"; (folder / "nested").mkdir(parents=True)
+        (folder / "nested" / "one.json").write_text('{"value":0}', encoding="utf-8")
+        self.config["source"]["key"] = {"meta": "relative_path"}
+        self.result.write_text('[{"id":"nested/one.json","value":7}]', encoding="utf-8")
+        pair = match_preview(load_preview(self.config, folder, [self.result]))
+        self.assertEqual(pair["key"], "nested/one.json")
+        self.assertEqual(pair["candidate"]["value"], 7)
 
     def test_filename_metadata_and_result_row(self):
         self.config["source"]["key"] = {"meta": "file_name"}
@@ -138,6 +161,31 @@ class PairTests(unittest.TestCase):
 class PairUiTests(unittest.TestCase):
     setUp = PairTests.setUp
     write = PairTests.write
+
+    def test_configured_preview_auto_loads_reuses_cache_and_cancels_pending_start(self):
+        self.write([{"id": "missing"}, {"id": 1, "value": 0}, {"id": 2, "value": 0}],
+                   [{"id": 2, "value": 2}, {"id": 1, "value": 1}])
+        root = tk.Tk(); root.withdraw()
+        self.addCleanup(root.destroy)
+        preview = PairPreview(root, self.config, str(self.source), [str(self.result)], configured=True)
+        self.addCleanup(preview.close)
+        def wait():
+            deadline = time.monotonic() + 10
+            while preview.pair is None and time.monotonic() < deadline:
+                root.update(); time.sleep(.01)
+            self.assertIsNotNone(preview.pair, preview.status.get())
+        wait()
+        self.assertEqual(preview.pair["key"], 1)
+        self.assertEqual(preview.pair["example_total"], 2)
+        with patch("label_porter.pair_preview_ui.load_preview", side_effect=AssertionError("cache missed")):
+            preview.next_button.invoke(); wait()
+        self.assertEqual(preview.pair["key"], 2)
+        # Closing the step before after_idle runs must not start a background read.
+        with patch("label_porter.pair_preview_ui.load_preview") as load:
+            unopened = PairPreview(root, self.config, str(self.source), [str(self.result)], configured=True)
+            unopened.close(); root.update()
+            load.assert_not_called()
+
     def test_async_load_cache_invalidation_and_close(self):
         self.write([{"id": 1, "value": 0}, {"id": 2, "value": 0}],
                    [{"id": 2, "value": 2}, {"id": 1, "value": 1}])

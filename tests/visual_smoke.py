@@ -20,7 +20,7 @@ def main():
     root = tk.Tk()
     errors = []
     root.report_callback_exception = lambda *args: errors.append(args)
-    output = Path('outputs/ui-v28')
+    output = Path('outputs/ui-v29')
     output.mkdir(parents=True, exist_ok=True)
     def wait(predicate):
         end = time.monotonic()+20
@@ -47,6 +47,12 @@ def main():
             app = App(root)
             root.geometry('1280x880+20+20'); root.update()
             capture('01-start')
+            app._show_tools(0); root.update()
+            ImageGrab.grab(window=int(app.help_window.frame(), 16)).save(output/'00-guide.png')
+            app._show_tools(1); root.update()
+            ImageGrab.grab(window=int(app.help_window.frame(), 16)).save(output/'00-help.png')
+            app.help_window.withdraw()
+            assert app.current_step == 0
             profile = {'schema_version':1,'name':'문장 보완 프로젝트 · AI 규칙',
                        'source':{'key':'/id'},'result':{'key':'/ref'},
                        'rules':[{'kind':'field','from':'/new','to':'/label','type':'string','nonempty':True}]}
@@ -54,13 +60,15 @@ def main():
             rule_path.write_text(json.dumps(profile), encoding='utf-8')
             with patch('label_porter.gui.filedialog.askopenfilename', return_value=str(rule_path)):
                 app._load_profile()
+            assert app.current_step == 1
+            app.source.set(str(originals)); app.result_paths = [str(results)]
+            app.output.set(str(folder/'포팅결과')); app._render_results()
+            capture('02-inputs')
+            app.primary_button.invoke(); root.update(); assert app.current_step == 2
             board = app.mapping
-            capture('02-connections')
-            board.pages.select(1)
-            board.preview.source.set(str(originals/'A001.json'))
-            board.preview.results = [str(results)]
-            board.preview.result_label.set(str(results))
-            board.preview.load(); wait(lambda: not board.preview.busy)
+            wait(lambda: board.preview.pair is not None)
+            capture('03-connections')
+            board.pages.select(1); root.update()
             assert board.preview.pair['key'] == 'A001', board.preview.status.get()
             capture('03-paired-values')
             board.preview.views.select(1); root.update()
@@ -69,11 +77,7 @@ def main():
             capture('03-small-preview')
             root.geometry('1280x880+20+20'); root.update()
             board.apply_button.invoke(); root.update()
-            assert app.current_step==1, (board.status.get(), app.status.get(), errors)
-            app.source.set(str(originals)); app.result_paths = [str(results)]
-            app.output.set(str(folder/'포팅결과')); app._render_results()
-            capture('04-inputs')
-            app.primary_button.invoke(); root.update(); assert app.current_step==2
+            assert app.current_step == 3, (app.status.get(), errors)
             app.primary_button.invoke(); wait(lambda:not app.running)
             assert app.preview_fingerprint
             assert [v.get() for v in app.metric_values.values()]==['4','4','2','1','1','1','2','2']

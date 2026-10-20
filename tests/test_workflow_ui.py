@@ -48,7 +48,7 @@ class WorkflowUiTests(unittest.TestCase):
     def test_main_steps_and_preview_requirement_then_actual_copy(self):
         with patch.object(App, "_load_settings"), patch.object(App, "_save_settings"):
             app = App(self.root)
-            self.assertEqual(len(app.steps.tabs()), 3)
+            self.assertEqual(len(app.steps.tabs()), 4)
             self.assertEqual(str(app.steps.tab(1, "state")), "disabled")
             config = {"schema_version": 1, "name": "UI test", "source": {"key": "/id"}, "result": {"key": "/ref"},
                       "rules": [{"kind": "field", "from": "/new", "to": "/label", "type": "string"}]}
@@ -57,8 +57,8 @@ class WorkflowUiTests(unittest.TestCase):
             self.assertEqual(app.steps.index(app.steps.select()), 1)
             app.source.set(str(self.source)); app.result_paths = [str(self.rf)]
             app.output.set(str(self.base / "output")); app._render_results()
-            app._advance_review()
-            self.assertEqual(app.steps.index(app.steps.select()), 2)
+            self.confirm_connections(app)
+            self.assertEqual(app.steps.index(app.steps.select()), 3)
             self.assertIn("전체 데이터 검증", app.primary_button["text"])
             self.assertIsNone(app.preview_fingerprint)
             before = self.sf.read_bytes()
@@ -72,8 +72,9 @@ class WorkflowUiTests(unittest.TestCase):
             actual = json.loads((app.last_run / "data" / "one.json").read_text(encoding="utf-8"))
             self.assertEqual(actual["label"], "new")
             app._set_config({**config, "name": "Changed rule"})
-            self.assertFalse(app.rule_ready)
-            self.assertEqual(str(app.steps.tab(1, "state")), "disabled")
+            self.assertTrue(app.rule_ready)
+            self.assertFalse(app.connection_confirmed)
+            self.assertEqual(str(app.steps.tab(3, "state")), "disabled")
             self.assertIsNone(app.preview_fingerprint)
             self.assertEqual(app.current_step, 0)
 
@@ -81,78 +82,113 @@ class WorkflowUiTests(unittest.TestCase):
         return {"schema_version": 1, "name": "프로젝트", "source": {"key": "/id"}, "result": {"key": "/ref"},
                 "rules": [{"kind": "field", "from": "/new", "to": "/label"}]}
 
-    def test_ai_import_opens_readonly_connections_and_advances_without_extra_save(self):
-        with patch.object(App, "_load_settings"), patch.object(App, "_save_settings"):
+    def configure_inputs(self, app):
+        app.source.set(str(self.source)); app.result_paths = [str(self.rf)]
+        app.output.set(str(self.base / "out")); app._render_results()
+
+    def confirm_connections(self, app):
+        app._wizard()
+        board = app.mapping; self.boards.append(board)
+        self.assertIsNotNone(board, app.status.get())
+        self.until(lambda: board.preview.pair is not None or "실패" in board.preview.status.get())
+        self.assertEqual(board.preview.pair["key"], "a", board.preview.status.get())
+        board.apply_button.invoke()
+        self.root.update()
+        self.assertEqual(app.current_step, 3)
+
+    def test_import_advances_to_inputs_then_automatically_loads_pair(self):
+        with patch.object(App, "_load_settings"), patch.object(App, "_save_settings") as save:
             app = App(self.root)
-            rule_file = self.base/'ai_rules.json'
+            rule_file = self.base / 'ai_rules.json'
             rule_file.write_text(json.dumps(self.config()), encoding='utf-8')
             with patch('label_porter.gui.filedialog.askopenfilename', return_value=str(rule_file)):
                 app._load_profile()
-            board = app.mapping
-            self.boards.append(board)
-            self.assertIsInstance(board.window, __import__('tkinter').ttk.Frame)
-            self.assertEqual(board.profile, self.config())
-            self.assertEqual(len(board.rows), 2)
-            self.assertEqual(str(board.raw_box['state']), 'disabled')
-            board.apply_button.invoke()
-            self.root.update()
-            self.assertTrue(board.closed)
             self.assertEqual(app.current_step, 1)
-            self.assertEqual(app.steps.index(app.steps.select()), 1)
+            self.assertIsNone(app.mapping)
             self.assertTrue(app.rule_ready)
-            self.assertEqual(app.source.get(), '')
-            app.source.set(str(self.source)); app.result_paths = [str(self.rf)]
-            app.output.set(str(self.base/'out')); app._render_results()
-            self.root.update()  # Deferred Tk events must not send the user back to step 1.
-            self.assertEqual(app.current_step, 1)
-            app.primary_button.invoke()
-            self.root.update()
-            self.assertEqual(app.current_step, 2)
-
-    def test_imported_rule_without_samples_can_advance_but_cannot_skip_full_validation(self):
-        with patch.object(App, "_load_settings"), patch.object(App, "_save_settings"):
-            app = App(self.root)
-            app._set_config(self.config())
-            app._wizard()
+            save.assert_called()
+            self.configure_inputs(app)
+            # The first source file is unmatched: auto preview must find a real pair.
+            (self.source/'0.json').write_text('{"id":"missing"}', encoding='utf-8')
+            app.primary_button.invoke(); self.root.update()
             board = app.mapping; self.boards.append(board)
-            self.root.update()
+            self.until(lambda: board.preview.pair is not None)
+            self.assertTrue(board.preview.configured)
+            self.assertEqual(board.preview.pair['key'], 'a')
+            self.assertEqual(board.preview.source.get(), str(self.source))
+            self.assertEqual(board.preview.results, [str(self.rf)])
+            self.assertEqual(str(board.raw_box['state']), 'disabled')
+            self.assertFalse(board.preview.spin.winfo_ismapped())
             board.apply_button.invoke(); self.root.update()
-            self.assertEqual(app.current_step, 1)
-            self.assertEqual(app._get_config(), self.config())
-            app.source.set(str(self.source)); app.result_paths = [str(self.rf)]
-            app.output.set(str(self.base/'out')); app._render_results(); app._advance_review()
+            self.assertEqual(app.current_step, 3)
+            self.assertTrue(app.connection_confirmed)
+            self.assertIsNone(app.preview_fingerprint)
             with patch('label_porter.workflow.run') as run:
                 app._start(False)
                 run.assert_not_called()
-            self.assertIn("다시 실행", app.status.get())
             self.assertFalse((self.base/'out').exists())
 
-    def test_json_draft_only_applies_explicitly_and_persists_custom_rule(self):
-        with patch.object(App, "_load_settings"):
-            app = App(self.root)
-            app.settings_path = self.base/'settings.json'
-            config = self.config()
-            app._set_config(config)
-            changed = {**config, "name": "custom saved"}
-            app.editor.delete('1.0', 'end'); app.editor.insert('1.0', json.dumps(changed))
-            self.root.update()
-            self.assertEqual(app._get_config(), config)
-            app._apply_json()
+    def test_connections_require_inputs_and_changed_inputs_require_confirmation(self):
+        with patch.object(App, "_load_settings"), patch.object(App, "_save_settings"):
+            app = App(self.root); app._set_config(self.config())
+            app._wizard()
+            self.assertIsNone(app.mapping)
+            self.assertEqual(app.current_step, 1)
+            self.configure_inputs(app); self.confirm_connections(app)
+            app.output.set(str(self.base/'other-output'))
+            self.assertFalse(app.connection_confirmed)
+            app._navigate(3)
+            self.assertEqual(app.current_step, 2)
             self.boards.append(app.mapping)
-            self.assertEqual(app._get_config(), changed)
-            self.assertEqual(app.route, 'mapping')
-            app.mapping._close()
-            app._save_settings()
-            app._set_config(config)
-            # Read the persisted value through the actual loader after the patch exits.
+
+    def test_help_reuses_one_window_without_changing_workflow(self):
+        with patch.object(App, "_load_settings"), patch.object(App, "_save_settings"):
+            app = App(self.root); app._set_config(self.config()); app._advance_inputs()
+            help_window = app.help_window
+            app._show_tools(0); self.root.update()
+            app._show_tools(1); self.root.update()
+            self.assertIs(app.help_window, help_window)
+            self.assertEqual(app.tabs.index(app.tabs.select()), 1)
+            self.assertEqual(app.current_step, 1)
+            self.assertEqual(len(app.tabs.tabs()), 2)
+            self.assertFalse(hasattr(app, 'editor'))
+            self.assertFalse(hasattr(app, '_new_project'))
+            self.assertFalse(hasattr(app, '_apply_json'))
+            app.help_window.withdraw()
+
+    def test_no_unique_example_still_allows_full_validation_and_reports_missing_pairs(self):
+        with patch.object(App, "_load_settings"), patch.object(App, "_save_settings"):
+            app = App(self.root); app._set_config(self.config()); self.configure_inputs(app)
+            self.rf.write_text('{"ref":"other","new":"value"}', encoding="utf-8")
+            app._wizard(); board = app.mapping; self.boards.append(board)
+            self.until(lambda: "유일하게 연결" in board.preview.status.get())
+            self.assertIsNone(board.preview.pair)
+            board.apply_button.invoke(); self.root.update()
+            self.assertEqual(app.current_step, 3)
+            app.primary_button.invoke(); self.until(lambda: not app.running)
+            self.assertEqual(app.last_summary["source_status_counts"]["no_result"], 1)
+            self.assertEqual(app.last_summary["result_issue_counts"]["orphan_result"], 1)
+            self.assertTrue(app.preview_fingerprint)
+
+    def test_rule_and_inputs_persist_without_draft_json(self):
+        with patch.object(App, "_load_settings"):
+            app = App(self.root); app.settings_path = self.base/'settings.json'
+            app._set_config(self.config()); self.configure_inputs(app)
+            app.rule_file.set('saved-profile.json'); app._save_settings()
+            app._set_config({**self.config(), 'name': 'other'})
+            app.source.set(''); app.result_paths = []
         app._load_settings()
-        self.assertEqual(app._get_config(), changed)
+        self.assertEqual(app._get_config(), self.config())
+        self.assertEqual(app.source.get(), str(self.source))
+        self.assertEqual(app.result_paths, [str(self.rf)])
+        self.assertEqual(app.rule_file.get(), 'saved-profile.json')
+        self.assertFalse(app.connection_confirmed)
 
     def test_source_edit_after_preview_requires_revalidation_and_metrics_are_separate(self):
         with patch.object(App, "_load_settings"), patch.object(App, "_save_settings"):
             app = App(self.root); app._set_config(self.config()); app._advance_inputs()
             app.source.set(str(self.source)); app.result_paths = [str(self.rf)]
-            app.output.set(str(self.base/'out')); app._render_results(); app._advance_review()
+            app.output.set(str(self.base/'out')); app._render_results(); self.confirm_connections(app)
             app.primary_button.invoke(); self.until(lambda: not app.running)
             self.assertEqual(app.metric_values['changed'].get(), '1')
             self.assertEqual(app.primary_button['text'], '복사본 저장')
@@ -179,6 +215,7 @@ class WorkflowUiTests(unittest.TestCase):
                 button = app.primary_button
                 self.assertGreater(button.winfo_width(), 80)
                 self.assertLessEqual(button.winfo_rooty()+button.winfo_height(), self.root.winfo_rooty()+self.root.winfo_height())
+            self.configure_inputs(app)
             app._wizard(); board = app.mapping; self.boards.append(board)
             self.root.update()
             self.assertGreater(board.canvas.winfo_height(), 70)
@@ -190,17 +227,21 @@ class WorkflowUiTests(unittest.TestCase):
             board._close(); self.root.update()
             self.assertEqual(app.route, 'workflow')
 
-    def test_new_project_clears_old_inputs_without_touching_files(self):
+    def test_import_replaces_project_inputs_but_invalid_import_preserves_them(self):
         with patch.object(App, '_load_settings'), patch.object(App, '_save_settings'):
-            app = App(self.root); app._set_config(self.config()); app._advance_inputs()
-            app.source.set(str(self.source)); app.output.set(str(self.base/'out'))
-            app.result_paths = [str(self.rf)]; app._render_results()
+            app = App(self.root); app._set_config(self.config()); self.configure_inputs(app)
             original = self.sf.read_bytes()
-            app._new_project(); self.root.update()
-            self.assertEqual(app.current_step, 0)
+            path = self.base/'profile.json'; path.write_text('{}', encoding='utf-8')
+            with patch('label_porter.gui.filedialog.askopenfilename', return_value=str(path)):
+                app._load_profile()
+                self.assertEqual(app.source.get(), str(self.source))
+                self.assertEqual(app._get_config(), self.config())
+                path.write_text(json.dumps({**self.config(), 'name': 'new rules'}), encoding='utf-8')
+                app._load_profile()
+            self.assertEqual(app.current_step, 1)
             self.assertEqual(app.source.get(), '')
             self.assertEqual(app.result_paths, [])
-            self.assertEqual(app._config_text, '')
+            self.assertEqual(app._get_config()['name'], 'new rules')
             self.assertEqual(self.sf.read_bytes(), original)
 
 
