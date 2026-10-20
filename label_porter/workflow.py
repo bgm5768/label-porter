@@ -72,9 +72,19 @@ class Workflow:
             self.source.set(path)
 
     def _choose_output(self):
-        path = filedialog.askdirectory(title="실행 결과를 저장할 상위 폴더")
+        path = filedialog.askdirectory(title="결과 저장 위치 선택", initialdir=self.output.get(), parent=self.root)
         if path:
             self.output.set(path)
+            self.output_mode = "custom"
+
+    def _reset_output(self):
+        self.output.set(str(default_output_directory()))
+        self.output_mode = "default"
+        self.status.set("저장 위치를 프로그램 폴더의 results로 변경했습니다.")
+
+    def _output_changed(self, *_):
+        value = self.output.get().strip()
+        self.output_mode = "default" if not value or Path(value).resolve() == default_output_directory() else "custom"
 
     def _choose_results(self):
         paths = filedialog.askopenfilenames(title="어드민 다운로드 결과 선택", filetypes=[("JSON / CSV", "*.json *.jsonl *.ndjson *.csv"), ("모든 파일", "*.*")])

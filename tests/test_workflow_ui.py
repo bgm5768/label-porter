@@ -372,6 +372,49 @@ class WorkflowUiTests(unittest.TestCase):
              patch("label_porter.workflow.sys._MEIPASS", str(self.base/"temporary"), create=True):
             self.assertEqual(default_output_directory(), self.base/"program"/"results")
 
+    def test_default_destination_follows_program_after_restart_but_custom_path_does_not(self):
+        with patch.object(App, "_load_settings"):
+            app = App(self.root)
+        app.settings_path = self.base/"settings.json"
+        old_default = self.base/"old-program"/"results"
+        new_default = self.base/"new-program"/"results"
+        with patch("label_porter.workflow.default_output_directory", return_value=old_default):
+            app.default_output_button.invoke()
+            app._save_settings()
+        self.assertEqual(json.loads(app.settings_path.read_text(encoding="utf-8"))["output_mode"], "default")
+        with patch("label_porter.gui.default_output_directory", return_value=new_default):
+            app._load_settings()
+        self.assertEqual(Path(app.output.get()), new_default)
+        self.assertEqual(app.output_mode, "default")
+        # An explicitly selected destination stays exact, even if named '포팅결과'.
+        chosen = self.base/"custom"/"포팅결과"
+        with patch("label_porter.workflow.filedialog.askdirectory", return_value=str(chosen)):
+            app._choose_output()
+        app._save_settings()
+        app._reset_output()
+        app._load_settings()
+        self.assertEqual(app.output.get(), str(chosen))
+        self.assertEqual(app.output_mode, "custom")
+
+    def test_legacy_destination_is_preserved_and_can_be_reset_or_cleared(self):
+        with patch.object(App, "_load_settings"):
+            app = App(self.root)
+        app.settings_path = self.base/"settings.json"
+        legacy = str(self.base/"포팅결과")
+        app.settings_path.write_text(json.dumps({"output": legacy}), encoding="utf-8")
+        app._load_settings()
+        self.assertEqual(app.output.get(), legacy)
+        app.default_output_button.invoke()
+        self.assertEqual(Path(app.output.get()), default_output_directory())
+        self.assertEqual(app.output_mode, "default")
+        app.output.set(str(self.base/"typed-path"))
+        self.assertEqual(app.output_mode, "custom")
+        app.output.set("  ")
+        app._save_settings()
+        app._load_settings()
+        self.assertEqual(Path(app.output.get()), default_output_directory())
+        self.assertEqual(app.output_mode, "default")
+
 
 if __name__ == "__main__":
     unittest.main()

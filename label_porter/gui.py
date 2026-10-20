@@ -38,6 +38,7 @@ class App(Workflow):
         self.current_step, self.route = 0, "workflow"
         self.help_return = None
         self.source, self.output = tk.StringVar(), tk.StringVar(value=str(default_output_directory()))
+        self.output_mode = "default"
         self.split_output = tk.BooleanVar(value=True)
         self.status = tk.StringVar(value="규칙 JSON 파일을 불러오면 입력·저장 위치 선택으로 이동합니다.")
         self.rule_file = tk.StringVar(value="아직 불러온 파일이 없습니다.")
@@ -54,6 +55,7 @@ class App(Workflow):
         self._config_text = ""
         self._build()
         self._load_settings()
+        self.output.trace_add("write", self._output_changed)
         for var in (self.source, self.output, self.split_output):
             var.trace_add("write", lambda *_: self._invalidate_preview())
         root.protocol("WM_DELETE_WINDOW", self._close)
@@ -156,6 +158,8 @@ class App(Workflow):
         self.result_list.configure(yscrollcommand=scroll.set); self.result_list.pack(fill="x", expand=True)
         group = card(inputs, "3. 새 결과를 저장할 폴더", "기본값은 프로그램 폴더의 results입니다. 직접 선택한 경로에는 이름을 덧붙이지 않습니다. 그 아래 날짜 / 순번으로 실행별 결과를 보관합니다.")
         self._path_row(group, self.output, self._choose_output)
+        self.default_output_button = ttk.Button(group, text="기본 위치", command=self._reset_output)
+        self.default_output_button.pack(anchor="e", pady=(6, 0))
         ttk.Checkbutton(inputs, text="정상 데이터도 변경 / 미변경으로 분리 · 검토·짝 없음·조건 제외·파일 오류는 분류별 examine에 저장", variable=self.split_output).pack(anchor="w", pady=(0, 12))
         group = card(review, "이번 작업", "전체 데이터 검증을 마쳐야 복사본을 저장할 수 있습니다.")
         ttk.Label(group, textvariable=self.run_summary, style="CardMuted.TLabel", wraplength=760).pack(fill="x")
@@ -492,7 +496,13 @@ class App(Workflow):
     def _load_settings(self):
         try:
             s = json.loads(self.settings_path.read_text(encoding="utf-8"))
-            self.source.set(s.get("source", "")); self.output.set(s.get("output") or str(default_output_directory())); self.split_output.set(s.get("split_output", True))
+            self.source.set(s.get("source", ""))
+            # Legacy settings have no provenance: preserve their path rather than guess
+            # whether a directory named '포팅결과' was explicitly selected.
+            mode = "default" if s.get("output_mode") == "default" or not (s.get("output") or "").strip() else "custom"
+            self.output.set(str(default_output_directory()) if mode == "default" else s["output"])
+            self.output_mode = mode
+            self.split_output.set(s.get("split_output", True))
             self.result_paths = [p for p in s.get("results", []) if Path(p).is_file()]; self._render_results()
             if s.get("config"): self._set_config(s["config"])
             elif s.get("profile") in self.profiles: self._set_config(self.profiles[s["profile"]][1])
@@ -502,7 +512,7 @@ class App(Workflow):
 
     def _save_settings(self):
         try:
-            s = {"source": self.source.get(), "output": self.output.get(), "results": self.result_paths, "split_output": self.split_output.get(),
+            s = {"source": self.source.get(), "output": self.output.get(), "output_mode": self.output_mode, "results": self.result_paths, "split_output": self.split_output.get(),
                  "rule_file": self.rule_file.get(), "config": self._get_config() if self._config_text else None}
             self.settings_path.parent.mkdir(parents=True, exist_ok=True)
             temp = self.settings_path.with_suffix(".tmp"); temp.write_text(json.dumps(s, ensure_ascii=False), encoding="utf-8"); os.replace(temp, self.settings_path)

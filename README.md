@@ -1,6 +1,6 @@
 # 라벨 포터
 
-**버전 관리 기준: v1 (2026-10-20)** — 프로그램 2.4.0을 첫 Git 기준 버전으로 보관합니다. `v1` 태그로 이 상태를 다시 확인할 수 있습니다. 현재 프로그램은 **2.14.0**이며 변경 내역은 [CHANGELOG.md](CHANGELOG.md)에 기록합니다.
+**버전 관리 기준: v1 (2026-10-20)** — 프로그램 2.4.0을 첫 Git 기준 버전으로 보관합니다. `v1` 태그로 이 상태를 다시 확인할 수 있습니다. 현재 프로그램은 **2.14.1**이며 변경 내역은 [CHANGELOG.md](CHANGELOG.md)에 기록합니다.
 
 플랫폼 DB에 접근하지 않고, 어드민에서 내려받은 작업 결과를 원본 라벨링 JSON에 반영하는 Windows 데스크톱 프로그램입니다. 모든 데이터 처리는 로컬에서 이루어집니다. 외부 서비스나 AI 호출이 없습니다.
 
@@ -18,7 +18,7 @@
 
 ## 실행
 
-- Windows 실행 파일: `dist/v2.14/LabelPorter.exe`를 더블클릭합니다. Python 설치가 필요하지 않습니다.
+- Windows 실행 파일: `dist/v2.14.1/LabelPorter.exe`를 더블클릭합니다. Python 설치가 필요하지 않습니다.
 - 소스 실행: Python 3.11 이상에서 `python -m label_porter` 또는 `start.cmd`를 실행합니다. 먼저 `python -m pip install -r requirements.txt`로 문서 뷰어 의존성을 설치합니다. Windows 공식 Python의 Tkinter를 사용합니다. 실행 파일에는 문서 뷰어가 내장되어 별도 설치가 필요 없습니다.
 - 상세 규칙 설명: [사용설명.md](사용설명.md)
 - 후처리 가능 수준과 제한: [후처리_지원범위.md](후처리_지원범위.md) — 프로그램의 사용 방법 화면에도 포함됩니다.
@@ -135,8 +135,8 @@ Windows 단일 실행 파일 빌드:
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt pyinstaller==6.22.3
-.\.venv\Scripts\python.exe -m PyInstaller --noconfirm --clean --distpath 'dist\v2.14' --workpath 'build\v2.14' LabelPorter.spec
-Copy-Item -LiteralPath '사용설명.md','AI_규칙작성_가이드.md','후처리_지원범위.md','THIRD_PARTY_NOTICES.txt' -Destination 'dist\v2.14'
+.\.venv\Scripts\python.exe -m PyInstaller --noconfirm --clean --distpath 'dist\v2.14.1' --workpath 'build\v2.14.1' LabelPorter.spec
+Copy-Item -LiteralPath '사용설명.md','AI_규칙작성_가이드.md','후처리_지원범위.md','THIRD_PARTY_NOTICES.txt' -Destination 'dist\v2.14.1'
 ```
 
 ## 저장소에 포함하는 파일
