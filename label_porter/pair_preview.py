@@ -218,6 +218,7 @@ def match_preview(data, index=0):
     except ERRORS as exc:
         candidate, status, message = None, "review_required", f"이 한 쌍은 검토가 필요합니다: {exc}"
     return {"key": json.loads(key)[1], "source": original, "result": incoming, "candidate": candidate,
+            "output": original if candidate is None else candidate,
             "source_location": source_location, "result_location": result_location,
             "status": status, "message": message, "rows": rows, "total_connections": visited + 1,
             "source_total": len(data.originals), "result_total": data.result_total,

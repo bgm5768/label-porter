@@ -3,6 +3,7 @@ from __future__ import annotations
 import csv
 import html
 import json
+import shutil
 from collections import Counter, deque
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -11,6 +12,7 @@ from .formats import atomic_text
 from .review_report import write_review
 from .detail_store import DetailStore
 from .result_dashboard import write_dashboard
+from .examine import category_for, result_path
 
 
 STATUS = {
@@ -39,12 +41,11 @@ class Reports:
         self.source_links = {}
         self.examine_positions = {}
         self.examine_files = set()
+        self.examine_categories = {}
+        self.examine_counts = Counter()
         self.details = DetailStore(directory)
         self._all_details = (directory / "record_details.jsonl").open("w", encoding="utf-8")
-        self._examine = None
-        if not preview:
-            (directory.parent / "examine").mkdir(exist_ok=True)
-            self._examine = (directory.parent / "examine" / "records.jsonl").open("w", encoding="utf-8")
+        self._examine_number = 0
         self.counts = Counter()
         self.scope_counts = {"source": Counter(), "result": Counter(), "source_file": Counter()}
         self.change_count = 0
@@ -72,12 +73,14 @@ class Reports:
     def record(self, scope, status, source_file="", record_path="", key="", result_file="", result_row="", reason="", changed_fields=0, evidence=None):
         self.counts[status] += 1
         self.scope_counts[scope][status] += 1
-        attention = status in ISSUES or status == "no_result" or bool(evidence and evidence.get("issues"))
+        category = category_for(scope, status, result_row, bool(evidence and evidence.get("issues")))
+        attention = bool(category)
         group = ("changed" if status in ("updated", "planned_update") else "unchanged") if self.split_output and scope == "source" else ""
         if attention and scope == "source":
             group = "examine"
             doc, _, pointer = record_path.partition("/")
             self.examine_positions.setdefault(Path(source_file), set()).add((int(doc[4:]), "/" + pointer if "/" in record_path else ""))
+            self.examine_categories.setdefault(Path(source_file), {})[(int(doc[4:]), "/" + pointer if "/" in record_path else "")] = category
         elif attention and scope == "source_file":
             self.examine_files.add(Path(source_file))
         review_link, issue_count = "", 0
@@ -112,8 +115,27 @@ class Reports:
                   "key": key, "result_file": result_file, "result_row": result_row, "reason": reason,
                   "preview": self.preview, **(evidence or {})}
         self._all_details.write(json.dumps(detail, ensure_ascii=False, allow_nan=False) + "\n")
-        if attention and self._examine:
-            self._examine.write(json.dumps(detail, ensure_ascii=False, allow_nan=False) + "\n")
+        if attention:
+            self.examine_counts[category] += 1
+            self._examine_number += 1
+            if not self.preview:
+                base = self.directory.parent
+                if scope == "result" and result_row:
+                    record = detail.get("platform_record", self.result_catalog.get((result_file, result_row), {}).get("_record"))
+                    if "platform_record" in detail or record is not None:
+                        target = result_path(category, result_file, result_row)
+                        atomic_text(base / target, json.dumps(record, ensure_ascii=False, allow_nan=False, indent=2) + "\n")
+                        detail["examine_data"] = target.as_posix()
+                elif scope == "result" and result_file:
+                    target = result_path(category, result_file)
+                    try:
+                        (base / target).parent.mkdir(parents=True, exist_ok=True)
+                        shutil.copyfile(result_file, base / target)
+                        detail["examine_data"] = target.as_posix()
+                    except OSError as exc:
+                        detail["archive_error"] = str(exc)
+                atomic_text(base / "examine" / category / "details" / f"{self._examine_number:08d}.json",
+                            json.dumps(detail, ensure_ascii=False, allow_nan=False, indent=2) + "\n")
         link = review_link or self.details.add(detail)
         groups = ["source", "output"] if scope == "source" else ["result"] if scope == "result" and result_row else ["files"]
         if status in ("updated", "planned_update", "unchanged") and not attention and scope == "source":
@@ -175,7 +197,6 @@ class Reports:
             self._reviews.close()
             self._held.close()
             self._all_details.close()
-            if self._examine: self._examine.close()
         label_issues = sum(self.counts[k] for k in ISSUES) + self.advisory_rows
         summary.update(status_counts=dict(self.counts), source_status_counts=dict(self.scope_counts["source"]),
                        result_issue_counts=dict(self.scope_counts["result"]), source_file_issue_counts=dict(self.scope_counts["source_file"]), changed_fields=self.change_count,
@@ -184,6 +205,7 @@ class Reports:
                        advisory_rows=self.advisory_rows, held_references=self.held_reference_count)
         category_counts = Counter(group for item in self.catalog for group in item["groups"])
         summary.update(category_counts=dict(category_counts), completed_records=category_counts["completed"],
+                       examine_category_counts=dict(self.examine_counts),
                        output_records=category_counts["output"], unmatched_records=category_counts["unmatched"],
                        unmatched_source_records=self.scope_counts["source"]["no_result"],
                        unmatched_result_records=self.scope_counts["result"]["orphan_result"])

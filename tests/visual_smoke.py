@@ -20,7 +20,7 @@ def main():
     root = tk.Tk()
     errors = []
     root.report_callback_exception = lambda *args: errors.append(args)
-    output = Path('outputs/ui-v29')
+    output = Path('outputs/ui-v210')
     output.mkdir(parents=True, exist_ok=True)
     def wait(predicate):
         end = time.monotonic()+20
@@ -72,6 +72,7 @@ def main():
             assert board.preview.pair['key'] == 'A001', board.preview.status.get()
             capture('03-paired-values')
             board.preview.views.select(1); root.update()
+            assert json.loads(board.preview.output_box.get('1.0', 'end-1c'))['label'] == '보완한 라벨'
             capture('03-json-pair')
             root.geometry('1040x680+20+20'); root.update()
             capture('03-small-preview')

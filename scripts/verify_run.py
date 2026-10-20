@@ -33,6 +33,8 @@ def verify_partitions(directory, manifest, summary, config):
     actual_paths = {path.relative_to(directory).as_posix() for group in ("changed", "unchanged", "unclassified", "examine")
                     for path in (directory / group / "labels").rglob("*") if path.is_file()}
     actual_paths.update(path.relative_to(directory).as_posix() for path in (directory / "examine" / "unparsed").rglob("*") if path.is_file())
+    actual_paths.update(path.relative_to(directory).as_posix() for path in (directory / "examine").glob("*/labels/**/*") if path.is_file())
+    actual_paths.update(path.relative_to(directory).as_posix() for path in (directory / "examine/file_errors/files/source").rglob("*") if path.is_file())
     assert paths == actual_paths, "분리 라벨 파일 누락/추가"
     rows_by_source = {}
     with (directory / "reports" / "partition_index.jsonl").open(encoding="utf-8") as handle:

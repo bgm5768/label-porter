@@ -41,6 +41,24 @@ def _subset(document, spec, selected):
     return result, addresses
 
 
+def _single(document, spec, address):
+    """Extract one record without copying/scanning the other array records."""
+    doc_index, record_pointer = address
+    pointer = spec.get("records_path", "")
+    original = document.docs[doc_index]
+    container = get_pointer(original, pointer)
+    mode = spec.get("record_mode", "auto")
+    if mode == "array" or (mode == "auto" and isinstance(container, list)):
+        index = int(record_pointer[len(pointer) + 1:])
+        selected = [container[index]]
+        # JSON input has no object aliases. Skip the large container during copy.
+        root = copy.deepcopy(original, {id(container): selected}) if pointer else selected
+        new_pointer = pointer + "/0"
+    else:
+        root, new_pointer = original, pointer
+    return Document([root], "", document.jsonl, document.bom, document.encoding), [(address, (0, new_pointer))]
+
+
 def _copy_with_hash(source, destination, checkpoint):
     destination.parent.mkdir(parents=True, exist_ok=True)
     digest = hashlib.sha256()
@@ -54,9 +72,10 @@ def _copy_with_hash(source, destination, checkpoint):
 
 def export_partitions(run_dir: Path, source_base: Path, selected_files, record_positions,
                       changed_positions, file_manifest, spec, summary, manifest,
-                      preview, checkpoint, progress, examine_positions=None, examine_files=None, split_output=True):
+                      preview, checkpoint, progress, examine_positions=None, examine_files=None, split_output=True, examine_categories=None):
     """A record goes to exactly one group; unparseable files remain unclassified."""
     examine_positions, examine_files = examine_positions or {}, examine_files or set()
+    examine_categories = examine_categories or {}
     summary["partition_status"] = "in_progress"
     counts = summary["partition_records"] = {"changed": 0, "unchanged": 0, "examine": 0}
     file_counts = summary["partition_files"] = {"changed": 0, "unchanged": 0, "examine": 0, "unclassified": 0}
@@ -83,13 +102,24 @@ def export_partitions(run_dir: Path, source_base: Path, selected_files, record_p
                 if split_output:
                     groups.update(changed=[item for item in positions if item in changed and item not in examined],
                                   unchanged=[item for item in positions if item not in changed and item not in examined])
+            exports = []
             for group, members in groups.items():
-                if members == [] and not (group == "examine" and positions == [] and relative in examine_files):
-                    continue
+                if group == "examine" and members:
+                    # One record per file, even if its input was a large JSON array.
+                    for ordinal, address in enumerate(positions, 1):
+                        if address not in examined: continue
+                        category = "file_errors" if relative in examine_files else examine_categories.get(relative, {}).get(address, "review")
+                        target = Path("examine") / category / "labels" / relative / f"{ordinal:08d}.json"
+                        exports.append((group, [address], target, category))
+                elif group == "unclassified" or (group == "examine" and positions == [] and relative in examine_files):
+                    exports.append((group, members, Path("examine/file_errors/files/source") / relative, "file_errors"))
+                elif members:
+                    exports.append((group, members, Path(group) / "labels" / relative, ""))
+            for group, members, output_relative, category in exports:
+                checkpoint()
                 if members is not None:
                     counts[group] += len(members)
                 file_counts[group] += 1
-                output_relative = (Path("examine") / "unparsed" if group == "unclassified" else Path(group) / "labels") / relative
                 destination = run_dir / output_relative
                 whole_file = positions is None or len(members) == len(positions)
                 if whole_file:
@@ -100,10 +130,10 @@ def export_partitions(run_dir: Path, source_base: Path, selected_files, record_p
                         expected_hash = file_manifest[relative].get("output_sha256", file_manifest[relative]["source_sha256"])
                         if document.sha256 != expected_hash:
                             raise DataError(f"분리 저장 중 파일 내용이 달라졌습니다: {relative}")
-                    subset, addresses = _subset(document, spec, set(members))
+                    subset, addresses = _single(document, spec, members[0]) if group == "examine" else _subset(document, spec, set(members))
                     if len(addresses) != len(members):
                         raise DataError(f"분리 저장할 레코드 개수가 맞지 않습니다: {relative}")
-                entry = {"group": group, "source_file": relative.as_posix(),
+                entry = {"group": group, "category": category, "source_file": relative.as_posix(),
                          "path": output_relative.as_posix(), "records": len(members) if members is not None else None}
                 if not preview:
                     if whole_file:
@@ -117,7 +147,7 @@ def export_partitions(run_dir: Path, source_base: Path, selected_files, record_p
                     entry["sha256"] = digest
                 outputs.append(entry)
                 for old, new in addresses:
-                    index_file.write(json.dumps({"group": group, "source_file": relative.as_posix(),
+                    index_file.write(json.dumps({"group": group, "category": category, "source_file": relative.as_posix(),
                         "source_record_path": f"doc:{old[0]}{old[1]}", "partition_file": output_relative.as_posix(),
                         "partition_record_path": f"doc:{new[0]}{new[1]}", "preview": preview}, ensure_ascii=False) + "\n")
             if number % 100 == 0 or number == len(selected_files):

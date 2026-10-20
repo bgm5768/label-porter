@@ -46,7 +46,8 @@ class PairPreview(ttk.Frame):
         self.load()
 
     def _build(self):
-        inputs = ttk.Frame(self); inputs.pack(fill="x")
+        inputs = self.inputs_panel = ttk.Frame(self)
+        if not self.configured: inputs.pack(fill="x")
         inputs.columnconfigure(1, weight=1)
         for row, label, variable, command in (
             (0, "원본 폴더" if self.configured else "원본 JSON", self.source, self._choose_source),
@@ -64,7 +65,7 @@ class PairPreview(ttk.Frame):
             ttk.Entry(inputs, textvariable=self.root_path, state="readonly").grid(row=2, column=1, sticky="ew")
             button = ttk.Button(inputs, text="폴더 선택…", command=self._choose_root)
             button.grid(row=2, column=2, padx=(8, 0)); self.controls.append(button)
-        actions = ttk.Frame(self); actions.pack(fill="x", pady=6)
+        actions = self.actions_panel = ttk.Frame(self); actions.pack(fill="x", pady=6)
         if not self.configured:
             ttk.Label(actions, text="원본 항목").pack(side="left")
         self.spin = ttk.Spinbox(actions, from_=1, to=1, textvariable=self.number, width=7)
@@ -72,6 +73,8 @@ class PairPreview(ttk.Frame):
         self.controls.append(self.spin)
         if self.configured:
             ttk.Label(actions, text="입력 단계의 데이터에서 자동 연결", foreground=MUTED).pack(side="left", padx=(0, 12))
+            self.paths_button = ttk.Button(actions, text="입력 위치 보기", command=self._toggle_paths)
+            self.paths_button.pack(side="left", padx=(0, 8))
             self.next_button = ttk.Button(actions, text="다른 예시", command=self._next_example, state="disabled")
             self.next_button.pack(side="left", padx=(0, 8))
         self.load_button = ttk.Button(actions, text="다시 불러오기" if self.configured else "KEY로 한 쌍 불러오기", command=self.load)
@@ -84,21 +87,36 @@ class PairPreview(ttk.Frame):
         self.views = ttk.Notebook(self); self.views.pack(fill="both", expand=True)
         graph, raw = ttk.Frame(self.views), ttk.Frame(self.views)
         self.views.add(graph, text="실제 값 연결")
-        self.views.add(raw, text="JSON 한 쌍")
+        self.views.add(raw, text="JSON 한 쌍 · 처리 후")
         self.canvas = tk.Canvas(graph, background=BG, highlightthickness=0)
         scroll = ttk.Scrollbar(graph, command=self.canvas.yview); scroll.pack(side="right", fill="y")
         self.canvas.configure(yscrollcommand=scroll.set); self.canvas.pack(fill="both", expand=True)
         self.canvas.bind("<Configure>", lambda *_: self._draw())
         self.canvas.bind("<MouseWheel>", lambda e: self.canvas.yview_scroll(-1 if e.delta > 0 else 1, "units"))
         self.canvas.bind("<Button-1>", self._select_row)
-        panes = ttk.Panedwindow(raw, orient="horizontal"); panes.pack(fill="both", expand=True)
+        vertical = ttk.Panedwindow(raw, orient="vertical"); vertical.pack(fill="both", expand=True)
+        panes = ttk.Panedwindow(vertical, orient="horizontal"); vertical.add(panes, weight=1)
         self.json_boxes = []
         for label in ("원본 라벨 JSON · 읽기 전용", "플랫폼 / 보완 JSON · 읽기 전용"):
             panel = ttk.Frame(panes, padding=5); panes.add(panel, weight=1)
             ttk.Label(panel, text=label).pack(anchor="w", pady=5)
             box = scrolledtext.ScrolledText(panel, wrap="word", font=("Consolas", 10), width=35, height=6, state="disabled")
             box.pack(fill="both", expand=True); self.json_boxes.append(box)
+        output_panel = ttk.Frame(vertical, padding=5); vertical.add(output_panel, weight=1)
+        self.output_note = tk.StringVar(value="규칙 적용 후 저장될 JSON · 예시")
+        ttk.Label(output_panel, textvariable=self.output_note, wraplength=720).pack(anchor="w", pady=5)
+        self.output_box = scrolledtext.ScrolledText(output_panel, wrap="word", font=("Consolas", 10),
+                                                  width=70, height=6, state="disabled")
+        self.output_box.pack(fill="both", expand=True)
         self._draw()
+
+    def _toggle_paths(self):
+        shown = bool(self.inputs_panel.winfo_manager())
+        if shown:
+            self.inputs_panel.pack_forget()
+        else:
+            self.inputs_panel.pack(fill="x", before=self.actions_panel)
+        self.paths_button.configure(text="입력 위치 숨기기" if not shown else "입력 위치 보기")
 
     def _result_label(self):
         return str(self.results[0]) if len(self.results) == 1 else f"{len(self.results):,}개 파일 선택" if self.results else ""
@@ -144,6 +162,8 @@ class PairPreview(ttk.Frame):
         self._set_busy(False)
         for box in self.json_boxes:
             self._text(box, "")
+        self._text(self.output_box, "")
+        self.output_note.set("규칙 적용 후 저장될 JSON · 예시")
         self.status.set("선택한 입력에서 같은 KEY의 예시를 자동으로 찾습니다." if self.configured else
                         "‘KEY로 한 쌍 불러오기’를 눌러 선택한 원본의 실제 값을 확인하세요.")
         self._draw()
@@ -222,10 +242,14 @@ class PairPreview(ttk.Frame):
         extra = f" · KEY 해석 불가 {pair['invalid_result_keys']:,}건" if pair["invalid_result_keys"] else ""
         example = f"예시 {pair['example_position']:,} / {pair['example_total']:,} · " if self.configured else ""
         self.status.set(f"{example}KEY {display(pair['key'], 100)} · {pair['message']}{extra}\n"
-                        f"{pair['source_location']} ↔ {pair['result_location']}\n"
-                        "선택한 자료의 한 쌍 예시입니다. 실제 저장 전 전체 데이터를 검증하세요.")
+                        f"{pair['source_location']} ↔ {pair['result_location']}")
         for box, name in zip(self.json_boxes, ("source", "result")):
             self._text(box, display(pair[name], 200000))
+        self._text(self.output_box, display(pair["output"], 200000))
+        self.output_note.set("검토 필요 · 저장 시 원본 유지" if pair["status"] == "review_required" else
+                             "조건 제외 · 저장 시 원본 유지" if pair["status"] == "excluded" else
+                             "변경 없음 · 저장 시 원본과 동일" if pair["status"] == "unchanged" else
+                             "규칙 적용 후 저장될 JSON · 예시 (아직 저장하지 않음)")
         self.canvas.yview_moveto(0); self._draw()
         self._set_busy(False)
 

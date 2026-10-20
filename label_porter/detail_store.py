@@ -44,14 +44,14 @@ class DetailStore:
 <script>
 const params = new URLSearchParams(location.search);
 const chunk = params.get('chunk'), id = params.get('id');
-if (!/^\\d{6}$/.test(chunk || '') || !/^\\d{8}$/.test(id || '')) {
+if (!/^\d{6}$/.test(chunk || '') || !/^\d{8}$/.test(id || '')) {
   document.getElementById('loading').textContent = '유효하지 않은 상세 주소입니다.';
 } else {
   const script = document.createElement('script');
   script.src = 'detail_data/' + chunk + '.js';
   script.onerror = () => { document.getElementById('loading').textContent = '상세 파일을 찾을 수 없습니다. reports 폴더 전체를 함께 보관하세요.'; };
   script.onload = () => {
-    const body = window.porterDetail[id];
+    const body = window.porterDetail && window.porterDetail[id];
     if (!body) { document.getElementById('loading').textContent = '해당 레코드가 없습니다.'; return; }
     const parsed = new DOMParser().parseFromString(body, 'text/html');
     document.head.replaceChildren(...parsed.head.childNodes);

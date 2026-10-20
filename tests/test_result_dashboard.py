@@ -41,18 +41,25 @@ class DashboardTests(unittest.TestCase):
         s = outcome.summary
         self.assertEqual(s["status"], "completed_with_issues")
         self.assertEqual((s["source_records"], s["result_records"], s["output_records"], s["completed_records"]), (6, 6, 6, 2))
-        self.assertEqual(s["partition_records"], {"changed": 1, "unchanged": 2, "examine": 3})
+        self.assertEqual(s["partition_records"], {"changed": 1, "unchanged": 1, "examine": 4})
         self.assertEqual((s["unmatched_source_records"], s["unmatched_result_records"]), (1, 1))
         self.assertEqual(s["category_counts"]["review"], 5)
         self.assertEqual(s["category_counts"]["files"], 1)
-        for group, expected in (("changed", ["a"]), ("unchanged", ["b", "e"]), ("examine", ["c", "d", None])):
+        for group, expected in (("changed", ["a"]), ("unchanged", ["b"])):
             rows = json.loads((outcome.directory / group / "labels/all.json").read_text(encoding="utf-8"))
             self.assertEqual([r.get("id") for r in rows], expected)
-        self.assertEqual((outcome.directory / "examine/unparsed/broken.json").read_bytes(), b'{"broken":')
-        archive = [json.loads(line) for line in (outcome.directory / "examine/records.jsonl").read_text(encoding="utf-8").splitlines()]
-        self.assertEqual(len(archive), 6)
+        for category, expected in (("unmatched", ["c"]), ("review", ["d", None]), ("excluded", ["e"])):
+            paths = sorted((outcome.directory / "examine" / category / "labels").rglob("*.json"))
+            rows = [json.loads(p.read_text(encoding="utf-8")) for p in paths if p.is_file()]
+            self.assertTrue(all(len(row) == 1 for row in rows))
+            self.assertCountEqual([row[0].get("id") for row in rows], expected)
+        self.assertEqual((outcome.directory / "examine/file_errors/files/source/broken.json").read_bytes(), b'{"broken":')
+        archive = [json.loads(p.read_text(encoding="utf-8")) for p in (outcome.directory / "examine").glob("*/details/*.json")]
+        self.assertEqual(len(archive), 7)
         orphan = next(row for row in archive if row["status"] == "orphan_result")
         self.assertEqual(orphan["platform_record"]["id"], "z")
+        self.assertEqual(json.loads((outcome.directory / orphan["examine_data"]).read_text(encoding="utf-8"))["id"], "z")
+        self.assertEqual(s["examine_category_counts"], {"review": 3, "file_errors": 1, "unmatched": 2, "excluded": 1})
         self.assertEqual(json.loads((self.source / "all.json").read_text()), self.original)
         verify(outcome.directory)
 
@@ -81,13 +88,31 @@ class DashboardTests(unittest.TestCase):
         self.assertEqual(completed["source_record"]["label"], "old")
         self.assertEqual(completed["platform_record"]["label"], "new")
         self.assertEqual(completed["final_record"]["label"], "new")
+        check = subprocess.run(["node", str(Path(__file__).with_name("detail_loader_harness.cjs")), str(directory)],
+                               capture_output=True, encoding="utf-8", timeout=20)
+        self.assertEqual(check.returncode, 0, check.stdout + check.stderr)
 
     def test_examine_is_always_exported_even_if_normal_split_is_disabled(self):
         outcome = self.execute(split_output=False)
-        self.assertTrue((outcome.directory / "examine/labels/all.json").exists())
+        self.assertTrue((outcome.directory / "examine/unmatched/labels/all.json/00000003.json").exists())
         self.assertFalse((outcome.directory / "unchanged").exists())
         self.assertFalse((outcome.directory / "changed").exists())
         self.assertTrue((outcome.directory / "reports/examine_index.jsonl").exists())
+
+    def test_result_duplicates_and_file_errors_are_archived_without_filename_collisions(self):
+        (self.source / "all.json").write_text('[{"id":"a","label":"old"}]', encoding="utf-8")
+        other = self.base / "other"; other.mkdir()
+        twin = other / self.result.name
+        for path, label in ((self.result, "one"), (twin, "two")):
+            path.write_text(json.dumps([{"id": "a", "label": label, "enabled": True}]), encoding="utf-8")
+        broken = self.base / "broken-result.json"; broken.write_text("{broken", encoding="utf-8")
+        outcome = run(self.source, [self.result, twin, broken], self.base / "output", self.config)
+        archived = [json.loads(p.read_text(encoding="utf-8")) for p in (outcome.directory / "examine/review/results").rglob("*.json")]
+        self.assertCountEqual([r["label"] for r in archived], ["one", "two"])
+        raw = list((outcome.directory / "examine/file_errors/files/results").rglob("broken-result.json"))
+        self.assertEqual(len(raw), 1)
+        self.assertEqual(raw[0].read_bytes(), broken.read_bytes())
+        self.assertFalse((outcome.directory / "examine/records.jsonl").exists())
 
     def test_preview_has_only_reports_and_next_run_refreshes_catalog(self):
         outcome = self.execute(preview=True)

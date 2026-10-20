@@ -149,7 +149,7 @@ class App(Workflow):
         self.result_list.configure(yscrollcommand=scroll.set); self.result_list.pack(fill="x", expand=True)
         group = card(inputs, "3. 새 결과를 저장할 폴더", "반영 결과는 날짜 / 001, 002… 폴더에 저장합니다. 원본 폴더 밖을 선택하세요.")
         self._path_row(group, self.output, self._choose_output)
-        ttk.Checkbutton(inputs, text="정상 데이터도 변경 / 미변경으로 분리 · 검토 대상은 항상 examine에 저장", variable=self.split_output).pack(anchor="w", pady=(0, 12))
+        ttk.Checkbutton(inputs, text="정상 데이터도 변경 / 미변경으로 분리 · 검토·짝 없음·조건 제외·파일 오류는 분류별 examine에 저장", variable=self.split_output).pack(anchor="w", pady=(0, 12))
         group = card(review, "이번 작업", "전체 데이터 검증을 마쳐야 복사본을 저장할 수 있습니다.")
         ttk.Label(group, textvariable=self.run_summary, style="CardMuted.TLabel", wraplength=760).pack(fill="x")
         self.metric_values = {}
@@ -416,7 +416,7 @@ class App(Workflow):
         text = f"원본 {summary.get('source_records', 0):,}건 · 결과 {summary.get('result_records', 0):,}건"
         p = summary.get("partition_records", {})
         if p: text += f"\n분리 {'예정' if summary['preview'] else '결과'}: 변경 {p.get('changed',0):,}건 / 미변경 {p.get('unchanged',0):,}건 / examine {p.get('examine',0):,}건"
-        text += "\n검토·오류·짝이 없는 항목은 examine에서 확인하세요. 처리 결과서에서 모든 분류를 검색할 수 있습니다."
+        text += "\nexamine에서 짝 없음·검토/오류·조건 제외·파일 오류를 폴더별로 확인하세요. 처리 결과서에서 모든 분류를 검색할 수 있습니다."
         if summary.get("advisory_rows"):
             text += f"\n어절 등 반영 {summary['advisory_rows']:,}건에서 연결 불확실 태그 {summary.get('held_references',0):,}개를 별도 보관했습니다."
         if summary["status"] in ("failed", "cancelled"): text += "\n작업이 완료되지 않았습니다. 부분 결과를 완성본으로 사용하지 마세요."

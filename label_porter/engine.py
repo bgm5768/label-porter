@@ -333,7 +333,7 @@ def _execute_run(run_dir, source, result_paths, inventory, selected, config,
         emit("partition", "검토 대상은 examine으로, 정상 데이터는 처리 상태별로 분리합니다.")
         export_partitions(run_dir, base, selected, record_positions, changed_positions,
                           manifest_by_file, config["source"], summary, manifest, preview, checkpoint, emit,
-                          report.examine_positions, report.examine_files, split_output)
+                          report.examine_positions, report.examine_files, split_output, report.examine_categories)
         summary["status"] = "completed_with_issues" if any(report.counts[key] for key in ISSUES) or report.advisory_rows or report.counts["no_result"] else "completed"
     except Cancelled as exc:
         summary.update(status="cancelled", error=str(exc))

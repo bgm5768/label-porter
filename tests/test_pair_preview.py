@@ -45,6 +45,7 @@ class PairTests(unittest.TestCase):
         pair = match_preview(data)
         self.assertEqual(pair["key"], "b")
         self.assertEqual(pair["candidate"]["value"], 2.86789)
+        self.assertEqual(pair["output"], pair["candidate"])
         self.assertEqual(pair["rows"][1]["result"], "2.86789")
         self.assertEqual(pair["candidate"], apply_record(pair["source"], pair["result"], data.profile, {})[0])
         self.assertEqual(before, (self.source.read_bytes(), self.result.read_bytes(), self.config))
@@ -129,12 +130,15 @@ class PairTests(unittest.TestCase):
         self.assertEqual(pair["status"], "unchanged")
         self.assertIn("해당하지", pair["rows"][1]["note"])
         self.config["include_when"] = [check]
-        self.assertEqual(match_preview(self.load())["status"], "excluded")
+        excluded = match_preview(self.load())
+        self.assertEqual(excluded["status"], "excluded")
+        self.assertEqual(excluded["output"], excluded["source"])
         self.config.pop("include_when")
         self.config["assertions"] = [{"kind": "condition", "condition": check}]
         pair = match_preview(self.load())
         self.assertEqual(pair["status"], "review_required")
         self.assertIsNone(pair["candidate"])
+        self.assertEqual(pair["output"], pair["source"])
 
     def test_items_match_by_id_and_rebuild_has_no_fake_original(self):
         rule = {"kind": "items", "from": "/parts", "to": "/parts", "source_key": {"scope": "source", "path": "/id"}, "result_key": "/id",
@@ -176,6 +180,8 @@ class PairUiTests(unittest.TestCase):
             self.assertIsNotNone(preview.pair, preview.status.get())
         wait()
         self.assertEqual(preview.pair["key"], 1)
+        self.assertEqual(json.loads(preview.output_box.get("1.0", "end-1c")), {"id": 1, "value": 1})
+        self.assertEqual(str(preview.output_box["state"]), "disabled")
         self.assertEqual(preview.pair["example_total"], 2)
         with patch("label_porter.pair_preview_ui.load_preview", side_effect=AssertionError("cache missed")):
             preview.next_button.invoke(); wait()

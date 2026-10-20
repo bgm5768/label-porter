@@ -4,6 +4,7 @@ import json
 
 from .detail_store import script_json
 from .formats import atomic_text
+from .examine import CATEGORIES as EXAMINE_CATEGORIES
 from .report_paging import CONTROLS, PAGER, SCRIPT, STYLE
 
 
@@ -77,10 +78,9 @@ def write_dashboard(directory, summary, catalog, examples):
     for folder, hint, count in (
         ("data/", "전체 복사본 · 검토로 보류한 레코드는 원본 유지", summary.get("output_records", 0)),
         ("changed/labels/", "정상 반영 후 값이 달라진 레코드", partition.get("changed", 0)),
-        ("unchanged/labels/", "정상적으로 값이 같거나 조건에서 제외된 레코드", partition.get("unchanged", 0)),
-        ("examine/labels/", "검토·연결 누락 대상의 출력 레코드 · 정상 분리본과 중복 없음", partition.get("examine", 0)),
-        ("examine/records.jsonl", "원본·보완 데이터와 사유 전체 · 양쪽 연결 오류 포함", counts.get("examine", 0)),
-        ("examine/unparsed/", "해석할 수 없는 원본 파일의 사본", files.get("unclassified", 0)),
+        ("unchanged/labels/", "정상적으로 값이 같은 레코드", partition.get("unchanged", 0)),
+        *[(f"examine/{category}/", label + " · labels/results는 레코드 1건당 파일 · details는 사유",
+           summary.get("examine_category_counts", {}).get(category, 0)) for category, label in EXAMINE_CATEGORIES.items()],
     ):
         if not summary.get("split_output") and folder.startswith(("changed", "unchanged")):
             continue
