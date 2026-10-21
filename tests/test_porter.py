@@ -27,7 +27,7 @@ class PorterTests(unittest.TestCase):
         self.source.mkdir()
         self.result = self.root / "result.json"
         self.output = self.root / "output"
-        self.config = load_config(ROOT / "profiles" / "generic.json")
+        self.config = load_config(ROOT / "rules" / "generic.json")
 
     def tearDown(self):
         self.temp.cleanup()
@@ -154,7 +154,7 @@ class PorterTests(unittest.TestCase):
         self.assertEqual(result.summary["status_counts"]["orphan_result"], 1)
 
     def test_nested_array_ids_not_positions_and_partial_missing_items_preserved(self):
-        self.config = load_config(ROOT / "profiles" / "example_objects.json")
+        self.config = load_config(ROOT / "rules" / "example_objects.json")
         original = {"id": "a", "labels": [{"object_id": "x", "class": "old", "position": {"x": 1, "y": 2, "z": 3}}, {"object_id": "y", "class": "keep", "position": {"x": 5, "y": 6}}]}
         result = self.execute(original, {"source_id": "a", "objects": [{"object_id": "x", "category": "new", "x": 10, "y": 20}]})
         actual = self.data(result)
@@ -163,14 +163,14 @@ class PorterTests(unittest.TestCase):
         self.assertIn("배열 항목 1개", self.report_rows(result)[0]["reason"])
 
     def test_new_array_id_causes_whole_record_review(self):
-        self.config = load_config(ROOT / "profiles" / "example_objects.json")
+        self.config = load_config(ROOT / "rules" / "example_objects.json")
         original = {"id": "a", "labels": [{"object_id": "x", "class": "old", "position": {"x": 1, "y": 2}}]}
         result = self.execute(original, {"source_id": "a", "objects": [{"object_id": "new", "category": "new", "x": 10, "y": 20}]})
         self.assertEqual(self.data(result), original)
         self.assertEqual(result.summary["status_counts"]["review_required"], 1)
 
     def test_audio_guard_intervals_and_tag_references(self):
-        config = load_config(ROOT / "profiles" / "013_audio.json")
+        config = load_config(ROOT / "rules" / "013_audio.json")
         original = {"RecordingMetadata": {"recorded_time_sec": 10}, "Segmentation": {"eojeols": [{"eojeolID": 1, "text": "hello", "start": 0, "end": 2}]}, "PronunciationErrorTags": [{"eojeolID": 1, "subtype": "keep"}]}
         incoming = {"unableToWork": 0, "orthographic_1": {"data": [{"objectID": "tag_987_1", "value": {"name_J2REGU": "hello ", "startTime": 1, "endTime": 3}}]}}
         candidate, changes, _, _ = apply_record(original, incoming, config, {})
@@ -239,8 +239,8 @@ class PorterTests(unittest.TestCase):
             with self.assertRaises(DataError):
                 validate_config(config)
 
-    def test_all_bundled_profiles_validate(self):
-        for path in (ROOT / "profiles").glob("*.json"):
+    def test_all_bundled_rules_validate(self):
+        for path in (ROOT / "rules").glob("*.json"):
             self.assertIsInstance(load_config(path), dict)
 
     def test_invalid_json_values_and_duplicate_fields_rejected(self):
@@ -354,7 +354,7 @@ class PorterTests(unittest.TestCase):
         result = self.execute({"id": "a", "label": "old"}, {"source_id": "a", "corrected_label": "new"})
         self.assertEqual(result.summary["status"], "completed")
         self.assertNotIn("assets", result.summary)
-        self.assertNotIn("assets", json.loads((result.directory / "profile.json").read_text(encoding="utf-8")))
+        self.assertNotIn("assets", json.loads((result.directory / "rule.json").read_text(encoding="utf-8")))
         self.assertFalse(any(path.name in ("assets", "assets.csv") for path in result.directory.rglob("*")))
         self.assertEqual(self.data(result)["label"], "new")
 

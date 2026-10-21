@@ -9,7 +9,7 @@ a = Analysis(
     ['launcher.py'],
     pathex=[],
     binaries=web_binaries + tk_binaries,
-    datas=[('profiles', 'profiles'), ('사용설명.md', '.'), ('AI_규칙작성_가이드.md', '.'), ('후처리_지원범위.md', '.'), ('THIRD_PARTY_NOTICES.txt', '.')] + web_datas + tk_datas,
+    datas=[('rules', 'rules'), ('사용설명.md', '.'), ('AI_규칙작성_가이드.md', '.'), ('후처리_지원범위.md', '.'), ('아키텍처_및_규칙엔진.md', '.'), ('THIRD_PARTY_NOTICES.txt', '.')] + web_datas + tk_datas,
     hiddenimports=web_imports + tk_imports,
     hookspath=[],
     hooksconfig={},

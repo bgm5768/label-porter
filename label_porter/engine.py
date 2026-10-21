@@ -109,14 +109,18 @@ def _execute_run(run_dir, source, result_paths, inventory, selected, config,
     data_dir = run_dir / "data"
     report = Reports(run_dir / "reports", split_output=split_output, preview=preview,
                      result_spec=config["result"], result_files=result_paths)
-    summary = {"version": 4, "profile": config["name"], "preview": bool(preview), "status": "running",
+    summary = {"version": 5, "rule": config["name"], "preview": bool(preview), "status": "running",
                "started_at": _now(), "source_directory": str(source), "run_directory": str(run_dir),
                "split_output": bool(split_output), "partition_status": "pending" if split_output else "disabled",
                "source_files": len(inventory), "label_files": len(selected), "source_records": 0, "result_records": 0}
     manifest = {"source_directory": str(source), "preview": bool(preview), "result_files": [], "files": [],
                 "examine_original_inputs": True, "source_mode": "folder" if directory_mode else "files",
                 "source_inputs": {rel.as_posix(): str(path) for rel, path in originals.items()}}
-    atomic_text(run_dir / "profile.json", json.dumps(config, ensure_ascii=False, indent=2))
+    atomic_text(run_dir / "rule.json", json.dumps(config, ensure_ascii=False, indent=2))
+    # Only the owned, reusable preview replaces its obsolete generated rule copy.
+    legacy_rule = run_dir / "profile.json"
+    if preview and legacy_rule.is_file():
+        legacy_rule.unlink()
     atomic_text(run_dir / "run_status.json", json.dumps(summary, ensure_ascii=False, indent=2))
 
     def emit(phase, message, done=0, total=0):

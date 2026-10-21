@@ -1,6 +1,6 @@
 # 라벨 포터
 
-**버전 관리 기준: v1 (2026-10-20)** — 프로그램 2.4.0을 첫 Git 기준 버전으로 보관합니다. `v1` 태그로 이 상태를 다시 확인할 수 있습니다. 현재 프로그램은 **2.20.0**이며 변경 내역은 [CHANGELOG.md](CHANGELOG.md)에 기록합니다.
+**버전 관리 기준: v1 (2026-10-20)** — 프로그램 2.4.0을 첫 Git 기준 버전으로 보관합니다. `v1` 태그로 이 상태를 다시 확인할 수 있습니다. 현재 프로그램은 **2.21.0**이며 변경 내역은 [CHANGELOG.md](CHANGELOG.md)에 기록합니다.
 
 플랫폼 DB에 접근하지 않고, 어드민에서 내려받은 작업 결과를 원본 라벨링 JSON에 반영하는 Windows 데스크톱 프로그램입니다. 모든 데이터 처리는 로컬에서 이루어집니다. 외부 서비스나 AI 호출이 없습니다.
 
@@ -18,11 +18,11 @@
 
 ## 실행
 
-- Windows 실행 파일: `dist/v2.20/LabelPorter.exe`를 더블클릭합니다. Python 설치가 필요하지 않습니다.
+- Windows 실행 파일: `dist/v2.21/LabelPorter.exe`를 더블클릭합니다. Python 설치가 필요하지 않습니다.
 - 소스 실행: Python 3.11 이상에서 `python -m label_porter` 또는 `start.cmd`를 실행합니다. 먼저 `python -m pip install -r requirements.txt`로 문서 뷰어 의존성을 설치합니다. Windows 공식 Python의 Tkinter를 사용합니다. 실행 파일에는 문서 뷰어가 내장되어 별도 설치가 필요 없습니다.
 - 상세 규칙 설명: [사용설명.md](사용설명.md)
 - 후처리 가능 수준과 제한: [후처리_지원범위.md](후처리_지원범위.md) — 프로그램의 사용 방법 화면에도 포함됩니다.
-- 전체 구조와 자체 규칙 엔진: [아키텍처_및_규칙엔진.md](아키텍처_및_규칙엔진.md) — 구조도, 규칙 문법, 실행 흐름, 프리뷰·저장·보고서와 코드 위치를 설명합니다.
+- 전체 구조와 자체 규칙 엔진: [아키텍처_및_규칙엔진.md](아키텍처_및_규칙엔진.md) — 사용 방법의 마지막 **아키텍처 · 규칙 엔진** 탭에도 포함됩니다. 계층별 구조, 규칙 문법, 실행 흐름, 프리뷰·저장·보고서와 코드 위치를 설명합니다.
 
 ## 화면에서 사용하기
 
@@ -39,7 +39,7 @@
 **AI 규칙 파일을 사용하는 방법:**
 
 1. 왼쪽 아래 **사용 방법 → AI 규칙 작성 가이드**에서 MD를 저장하거나 복사해 원본·플랫폼/보완 데이터와 함께 AI에게 전달합니다.
-2. **규칙 파일 불러오기**로 `project_profile.json`을 엽니다. 같은 화면의 **현재 규칙** 아래에서 **필드 연결 / 규칙 JSON**을 확인합니다. 연결 행을 누르면 세부 설정을 볼 수 있으며, **규칙 내보내기**는 그 아래에 있습니다. **다음 단계**를 누르면 데이터 선택으로 이동합니다.
+2. **규칙 파일 불러오기**로 `project_rule.json`을 엽니다. 같은 화면의 **현재 규칙** 아래에서 **필드 연결 / 규칙 JSON**을 확인합니다. 연결 행을 누르면 세부 설정을 볼 수 있으며, **규칙 내보내기**는 그 아래에 있습니다. **다음 단계**를 누르면 데이터 선택으로 이동합니다.
 3. 원본과 플랫폼/보완 데이터를 각각 **폴더 선택** 또는 **파일 다중 선택**으로 지정합니다. 양쪽 모두 **선택 제거 / JSON 미리보기**가 있습니다. 뷰어에서 파일명·경로 검색과 100개 단위 페이지 이동으로 원하는 파일을 열 수 있습니다. 저장 위치도 확인합니다.
 4. **필드 연결**과 **필드 연결 프리뷰**를 확인합니다. 전체 목록을 자동으로 불러오며 KEY·파일명·JSON 내용 검색, 연결 상태 필터, 페이지 이동을 지원합니다. 외부에서 파일을 변경했다면 ‘데이터 새로 읽기’를 누릅니다.
 5. **다음 단계 → 전체 데이터 검증 → 처리 결과서 → 복사본 저장** 순서로 진행합니다.
@@ -56,7 +56,7 @@
 선택한 저장 폴더/
   미리보기/               가장 최근 미리보기 보고서 (다음 미리보기 때 갱신)
     reports/
-    profile.json
+    rule.json
     manifest.json
     run_status.json
   2026-10-19/
@@ -80,7 +80,7 @@
         review_details.jsonl 전체 검토 사유·원본·플랫폼·실제 출력·후보 JSON
         review/           검토 레코드별 비교 HTML 및 전체 JSON
         partition_index.jsonl 원본 ↔ 분리본 위치
-      profile.json        적용 규칙
+      rule.json        적용 규칙
       manifest.json       원본/결과 해시
       run_status.json     완료·검토·실패·중단 상태
     002/                  이날 두 번째 반영
@@ -116,14 +116,14 @@
 
 [AI_규칙작성_가이드.md](AI_규칙작성_가이드.md)는 별도 파일 하나로 AI에 전달할 수 있습니다. 데이터 역할 확인, 고유 키와 필드 대응, 허용 문법, 배열 객체 연결, 단위 변환, 보존 정책, 검증 절차와 반환 형식을 정의합니다. 문서의 텍스트·객체·시간 구간 예제는 가상 구조이며 실제 프로젝트에 맞춰 작성하도록 안내합니다.
 
-프로그램의 AI 가이드·사용 방법·후처리 지원 범위 탭은 배포에 포함된 각 Markdown을 제목·표·강조·코드 서식으로 표시합니다. 목차 이동, 문서 검색, 글자 크기 조절을 지원하며 복사·저장에는 MD 원문을 사용합니다. 가이드는 실행 파일에도 내장되어 단독 EXE로 사용할 때도 읽기·복사·파일 저장이 가능합니다.
+프로그램의 AI 가이드·사용 방법·후처리 지원 범위·아키텍처 탭은 배포에 포함된 각 Markdown을 제목·표·강조·코드 서식으로 표시합니다. 목차 이동, 문서 검색, 글자 크기 조절을 지원하며 복사·저장에는 MD 원문을 사용합니다. 가이드는 실행 파일에도 내장되어 단독 EXE로 사용할 때도 읽기·복사·파일 저장이 가능합니다.
 
 ## 명령행
 
 ```powershell
-python -m label_porter run --source 'C:\project\original_labels' --result 'C:\project\123_result.json' --config 'project_profile.json' --output 'C:\project\포팅결과' --preview
-python -m label_porter run --source 'C:\project\original_labels' --result 'C:\project\123_result.json' --config 'project_profile.json' --output 'C:\project\포팅결과'
-python -m label_porter validate-config 'project_profile.json'
+python -m label_porter run --source 'C:\project\original_labels' --result 'C:\project\123_result.json' --config 'project_rule.json' --output 'C:\project\포팅결과' --preview
+python -m label_porter run --source 'C:\project\original_labels' --result 'C:\project\123_result.json' --config 'project_rule.json' --output 'C:\project\포팅결과'
+python -m label_porter validate-config 'project_rule.json'
 ```
 
 여러 결과 파일은 `--result 'a.json' 'b.json'`처럼 지정합니다. 동일 프로젝트의 같은 규칙을 적용할 파일들만 묶습니다. 서로 다른 시점의 동일 작업 결과가 중복되면 충돌로 보고하므로, 최종 확정된 내보내기 파일을 선택하세요.
@@ -150,15 +150,15 @@ Windows 단일 실행 파일 빌드:
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt pyinstaller==6.22.3
-.\.venv\Scripts\python.exe -m PyInstaller --noconfirm --clean --distpath 'dist\v2.20' --workpath 'build\v2.20' LabelPorter.spec
-Copy-Item -LiteralPath '사용설명.md','AI_규칙작성_가이드.md','후처리_지원범위.md','아키텍처_및_규칙엔진.md','THIRD_PARTY_NOTICES.txt' -Destination 'dist\v2.20'
+.\.venv\Scripts\python.exe -m PyInstaller --noconfirm --clean --distpath 'dist\v2.21' --workpath 'build\v2.21' LabelPorter.spec
+Copy-Item -LiteralPath '사용설명.md','AI_규칙작성_가이드.md','후처리_지원범위.md','아키텍처_및_규칙엔진.md','THIRD_PARTY_NOTICES.txt' -Destination 'dist\v2.21'
 ```
 
 ## 저장소에 포함하는 파일
 
 소스 코드, 테스트와 가상 데이터, 규칙 예제, 사용 설명서, 빌드 설정을 관리합니다. 실제 라벨 데이터, 플랫폼 내보내기 파일, 검증 보고서, 실행 파일, 가상 환경, 개인 설정과 인증 정보는 포함하지 않습니다.
 
-작업 데이터는 저장소 밖에 두거나 `.gitignore`에 지정된 `data/`, `inputs/`, `results/`, `outputs/` 폴더를 사용하세요. 개인 프로젝트 규칙은 `local_profiles/`에 보관하세요. `profiles/`는 배포용 예제이며 특정 작업에 적용하기 전에 조건을 확인해야 합니다. `.gitignore`는 임의 이름의 민감한 파일을 자동 판별하지 않으므로 커밋 전에 추가 파일 목록을 확인하세요.
+작업 데이터는 저장소 밖에 두거나 `.gitignore`에 지정된 `data/`, `inputs/`, `results/`, `outputs/` 폴더를 사용하세요. 개인 프로젝트 규칙은 `local_rules/`에 보관하세요. `rules/`는 배포용 예제이며 특정 작업에 적용하기 전에 조건을 확인해야 합니다. `.gitignore`는 임의 이름의 민감한 파일을 자동 판별하지 않으므로 커밋 전에 추가 파일 목록을 확인하세요.
 
 ## 적용 범위
 

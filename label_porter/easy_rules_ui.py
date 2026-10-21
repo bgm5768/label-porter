@@ -9,7 +9,7 @@ from pathlib import Path
 import tkinter as tk
 from tkinter import filedialog, scrolledtext, ttk
 
-from .easy_rules import analyze_inputs, friendly, make_profile, select_key, key_fields, key_stats, connection_option
+from .easy_rules import analyze_inputs, friendly, make_rule, select_key, key_fields, key_stats, connection_option
 from .pair_preview import display
 from .pair_preview_ui import PairPreview
 from .ui import ScrollPage, card
@@ -24,7 +24,7 @@ class EasyRules(ttk.Frame):
         self.stage, self.busy, self.closed = 0, False, False
         self.revision, self.cancel_event = 0, threading.Event()
         self.queue = queue.Queue()
-        self.inputs = self.data = self.preview = self.profile = None
+        self.inputs = self.data = self.preview = self.rule_config = None
         self.options, self.selected = [], set()
         self.source = tk.StringVar(value=source)
         self.results = list(results)
@@ -291,17 +291,17 @@ class EasyRules(ttk.Frame):
             self._work(lambda cancel, progress: analyze_inputs(source, results, progress, cancel), "inputs")
         elif self.stage == 1:
             try:
-                self.profile = make_profile(self.data, self.options, self.selected, self.name.get(), self.check_times.get())
+                self.rule_config = make_rule(self.data, self.options, self.selected, self.name.get(), self.check_times.get())
                 if self.preview: self.preview.close(); self.preview.destroy()
-                self.preview = PairPreview(self.preview_host, self.profile, self.inputs.source, self.inputs.result_files,
-                                           configured=True, preloaded=replace(self.data, profile=copy.deepcopy(self.profile)))
+                self.preview = PairPreview(self.preview_host, self.rule_config, self.inputs.source, self.inputs.result_files,
+                                           configured=True, preloaded=replace(self.data, rule_config=copy.deepcopy(self.rule_config)))
                 self.preview.load_button.configure(text="데이터 새로 분석", command=self.refresh)
                 self.preview.pack(fill="both", expand=True)
                 self.status.set("검색과 페이지 이동으로 실제 데이터를 확인하세요. 규칙을 만든 뒤 전체 검증을 진행합니다.")
                 self._show(2)
             except (ValueError, TypeError, KeyError) as exc: self.status.set(str(exc)); self.on_change()
         else:
-            self.on_finish(self.profile, self.inputs, self.preview.cache)
+            self.on_finish(self.rule_config, self.inputs, self.preview.cache)
 
     def back(self):
         if self.busy: return
@@ -425,7 +425,7 @@ class EasyRules(ttk.Frame):
                     elif kind == "fields":
                         self.data, self.options, chosen = value
                         self.selected = {item["path"] for item in self.options if item["selected"]}
-                        self.connection.set(f"원본 {self.data.profile['source']['key']} ↔ 보완 {self.data.profile['result']['key']}\n전체 입력 기준 · 연결 {chosen['matched']:,}쌍 · 연결 안 됨: 원본 {len(self.inputs.originals)-chosen['matched']:,} / 보완 {len(self.inputs.incoming)-chosen['matched']:,}건 · 중복: 원본 {chosen['source_duplicates']:,} / 보완 {chosen['result_duplicates']:,}건")
+                        self.connection.set(f"원본 {self.data.rule_config['source']['key']} ↔ 보완 {self.data.rule_config['result']['key']}\n전체 입력 기준 · 연결 {chosen['matched']:,}쌍 · 연결 안 됨: 원본 {len(self.inputs.originals)-chosen['matched']:,} / 보완 {len(self.inputs.incoming)-chosen['matched']:,}건 · 중복: 원본 {chosen['source_duplicates']:,} / 보완 {chosen['result_duplicates']:,}건")
                         self._render_fields()
                         if not self.options:
                             self.status.set("연결 기준을 확인했습니다. ‘다른 필드 연결’에서 원본 대상과 보완 값을 선택하세요.")

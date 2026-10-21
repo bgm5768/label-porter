@@ -28,7 +28,7 @@ class MarkdownTests(unittest.TestCase):
         self.assertEqual(headings, [("section-0", "제목", 1)])
 
     def test_all_bundled_documents_render_with_real_headings(self):
-        for name in ("AI_규칙작성_가이드.md", "사용설명.md", "후처리_지원범위.md"):
+        for name in ("AI_규칙작성_가이드.md", "사용설명.md", "후처리_지원범위.md", "아키텍처_및_규칙엔진.md"):
             with self.subTest(name=name):
                 rendered, headings = render_document((ROOT/name).read_text(encoding="utf-8"))
                 self.assertGreater(len(headings), 10)
@@ -59,6 +59,8 @@ class MarkdownTests(unittest.TestCase):
         self.assertEqual(reader.browser.cget("fontscale"), 1.3)
         reader._link("후처리_지원범위.md")
         self.assertEqual(navigation, [2])
+        reader._link("아키텍처_및_규칙엔진.md")
+        self.assertEqual(navigation, [2, 3])
         self.assertFalse(reader.browser.cget("javascript_enabled"))
         with self.assertRaises(ValueError): reader._deny_request("https://example.com")
         reader.query.set("Search")

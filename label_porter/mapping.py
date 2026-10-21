@@ -333,7 +333,7 @@ class Scope:
     title: str = "전체 데이터"
     wires: list = field(default_factory=list)
     imported: bool = False
-    profile: dict | None = None
+    rule_config: dict | None = None
 
     def __post_init__(self):
         self.source_fields = collect_fields(self.source_rows, self.meta)
@@ -446,10 +446,10 @@ def compile_scope(scope, root=True):
     return source_key, result_key, rules, checks
 
 
-def compile_profile(scope, source_sample, result_sample, source_pointer, result_pointer, name):
+def compile_rule(scope, source_sample, result_sample, source_pointer, result_pointer, name):
     sk, rk, rules, checks = compile_scope(scope)
-    if scope.profile is not None:
-        config = copy.deepcopy(scope.profile)
+    if scope.rule_config is not None:
+        config = copy.deepcopy(scope.rule_config)
         config["name"] = name.strip() or config["name"]
         for side, pointer, key in (("source", source_pointer, sk), ("result", result_pointer, rk)):
             config[side]["key"] = key
@@ -534,7 +534,7 @@ def import_scope(source_rows, result_rows, source_key, result_key, rules, meta=N
     return scope
 
 
-def import_profile(config, source_sample=None, result_sample=None, source_pointer=None, result_pointer=None):
+def import_rule(config, source_sample=None, result_sample=None, source_pointer=None, result_pointer=None):
     config = validate_config(copy.deepcopy(config))
     sp = config["source"].get("records_path", "") if source_pointer is None else source_pointer
     rp = config["result"].get("records_path", "") if result_pointer is None else result_pointer
@@ -542,7 +542,7 @@ def import_profile(config, source_sample=None, result_sample=None, source_pointe
     result_rows = result_sample.rows(rp, config["result"].get("record_mode", "auto")) if result_sample else []
     scope = import_scope(source_rows, result_rows, config["source"]["key"], config["result"]["key"],
                          config["rules"], source_sample.meta if source_sample else None)
-    scope.profile = config
+    scope.rule_config = config
     return scope
 
 
@@ -626,7 +626,7 @@ def _context(row, meta):
             "root_original": row, "root_result": row, "meta": meta}
 
 
-def preview_profile(config, source_rows, result_rows, meta):
+def preview_rule(config, source_rows, result_rows, meta):
     index, original_counts = defaultdict(list), Counter()
     errors = []
     invalid_results = 0

@@ -14,7 +14,7 @@ from label_porter.pair_preview_ui import PairPreview
 from label_porter.rules import apply_record
 
 
-def profile():
+def rule_config():
     return validate_config({
         "schema_version": 1, "name": "Example",
         "source": {"key": "/id"}, "result": {"key": "/id"},
@@ -29,7 +29,7 @@ class PairTests(unittest.TestCase):
         self.base = Path(self.temp.name)
         self.source = self.base / "source.json"
         self.result = self.base / "result.json"
-        self.config = profile()
+        self.config = rule_config()
 
     def write(self, original, incoming):
         self.source.write_text(json.dumps(original), encoding="utf-8")
@@ -47,7 +47,7 @@ class PairTests(unittest.TestCase):
         self.assertEqual(pair["candidate"]["value"], 2.86789)
         self.assertEqual(pair["output"], pair["candidate"])
         self.assertEqual(pair["rows"][1]["result"], "2.86789")
-        self.assertEqual(pair["candidate"], apply_record(pair["source"], pair["result"], data.profile, {})[0])
+        self.assertEqual(pair["candidate"], apply_record(pair["source"], pair["result"], data.rule_config, {})[0])
         self.assertEqual(before, (self.source.read_bytes(), self.result.read_bytes(), self.config))
 
     def test_trailing_zeroes_removed_without_rounding(self):

@@ -24,7 +24,7 @@ class StorageTests(unittest.TestCase):
         self.result = self.root / "result.json"
         self.result.write_text('{"source_id":"a","corrected_label":"new"}', encoding="utf-8")
         self.output = self.root / "output"
-        self.config = load_config(Path(__file__).resolve().parents[1] / "profiles" / "generic.json")
+        self.config = load_config(Path(__file__).resolve().parents[1] / "rules" / "generic.json")
         self.clock = patch("label_porter.storage.now", return_value=datetime(2026, 10, 19, 23, 59, tzinfo=KST))
         self.fake_now = self.clock.start()
 
@@ -82,7 +82,7 @@ class StorageTests(unittest.TestCase):
 
     def test_inputs_inside_reused_preview_are_rejected_before_writing(self):
         preview = self.execute(preview=True).directory
-        self.result = preview / "profile.json"
+        self.result = preview / "rule.json"
         before = self.result.read_bytes()
         with self.assertRaises(DataError):
             self.execute(preview=True)
@@ -91,7 +91,7 @@ class StorageTests(unittest.TestCase):
         self.source = preview
         with self.assertRaises(DataError):
             self.execute(preview=True)
-        self.assertEqual((preview / "profile.json").read_bytes(), before)
+        self.assertEqual((preview / "rule.json").read_bytes(), before)
 
     def test_concurrent_preview_is_rejected_and_lock_released(self):
         with output_session(self.output, True, self.source, [self.result]):

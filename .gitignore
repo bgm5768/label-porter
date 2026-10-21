@@ -18,13 +18,15 @@ htmlcov/
 *.zip
 *.log
 
-# Local datasets, exported results, and user-specific profiles
+# Local datasets, exported results, and user-specific rules
 /data/
 /input/
 /inputs/
 /originals/
 /results/
 /reports/
+/local_rules/
+# Legacy private-rule folder remains ignored
 /local_profiles/
 /1차/
 /포팅결과/

@@ -84,7 +84,10 @@ def verify(directory):
     directory = Path(directory).resolve()
     manifest = json.loads((directory / "manifest.json").read_text(encoding="utf-8"))
     summary = json.loads((directory / "reports" / "summary.json").read_text(encoding="utf-8"))
-    config = json.loads((directory / "profile.json").read_text(encoding="utf-8"))
+    rule_path = directory / "rule.json"
+    if not rule_path.is_file():  # Read historical runs without renaming their files.
+        rule_path = directory / "profile.json"
+    config = json.loads(rule_path.read_text(encoding="utf-8"))
     assert not manifest["preview"], "미리보기에는 데이터 복사본이 없습니다."
     assert summary["status"] in ("completed", "completed_with_issues"), "정상 종료된 실행만 검증할 수 있습니다."
     source = Path(manifest["source_directory"])

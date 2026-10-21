@@ -19,9 +19,9 @@ def self_test(output):
             app = App(root)
         app._save_settings = lambda: None  # Self-tests must never alter the user's working project.
         root.update_idletasks()
-        rule_path, config = next((path, profile) for path, profile in app.profiles.values() if path.stem == "generic")
-        assert len(app.profiles) == 4
-        assert len(app.tabs.tabs()) == 3
+        rule_path, config = next((path, rule_config) for path, rule_config in app.bundled_rules.values() if path.stem == "generic")
+        assert len(app.bundled_rules) == 4
+        assert len(app.tabs.tabs()) == 4
         assert len(app.steps.tabs()) == 4
         assert [b['text'] for b in app.source_panel.buttons] == [b['text'] for b in app.result_panel.buttons]
         assert str(app.steps.tab(1, "state")) == "disabled"
@@ -30,6 +30,9 @@ def self_test(output):
         assert app.ai_guide_box.source == app.ai_guide_text
         assert app.help_box.source == app.help_text
         assert app.capabilities_box.source == app.capabilities_text
+        assert app.architecture_box.source == app.architecture_text
+        assert app.tabs.tab(3, "text") == "아키텍처 · 규칙 엔진"
+        assert 'project_rule.json' in app.architecture_text and 'rule.json' in app.architecture_text
         assert "<table>" in app.ai_guide_box.html_source
         assert app.ai_guide_box.browser.document.getElementById("section-0").textContent
         assert "rebuild_items" in app.capabilities_text
@@ -37,7 +40,7 @@ def self_test(output):
         assert all(text not in app.help_text for text in ("one_before", "one_after", "008", "013"))
         assert not hasattr(app, "assets_directory")
         with patch('label_porter.gui.filedialog.askopenfilename', return_value=str(rule_path)):
-            app._load_profile()
+            app._load_rule()
         assert app.current_step == 0 and app.rule_ready
         inspector = app.rule_inspector
         assert inspector.preview is None
@@ -57,7 +60,7 @@ def self_test(output):
             app.output.set(str(base / "output")); app._render_results()
             app._wizard()
             editor = app.mapping
-            assert editor.profile == config
+            assert editor.rule_config == config
             assert [editor.pages.tab(tab, "text") for tab in editor.pages.tabs()] == ["필드 연결", "필드 연결 프리뷰", "규칙 JSON"]
             assert all(str(box["state"]) == "disabled" for box in editor.preview.json_boxes)
             assert editor.raw_box["state"] == "disabled"
@@ -83,10 +86,10 @@ def self_test(output):
             assert [editor.preview.views.tab(tab, "text") for tab in editor.preview.views.tabs()] == [
                 "전체 데이터 목록", "실제 값 연결", "JSON 한 쌍 · 처리 후"]
             app.primary_button.invoke()
-            from label_porter.mapping import load_samples, preview_profile, import_profile, compile_profile
-            for _, profile in app.profiles.values():
-                restored = import_profile(profile)
-                assert compile_profile(restored, None, None, profile["source"].get("records_path", ""), profile["result"].get("records_path", ""), profile["name"]) == profile
+            from label_porter.mapping import load_samples, preview_rule, import_rule, compile_rule
+            for _, rule_config in app.bundled_rules.values():
+                restored = import_rule(rule_config)
+                assert compile_rule(restored, None, None, rule_config["source"].get("records_path", ""), rule_config["result"].get("records_path", ""), rule_config["name"]) == rule_config
             first_preview = run(source, [base / "result.json"], base / "output", config, preview=True)
             second_preview = run(source, [base / "result.json"], base / "output", config, preview=True)
             assert first_preview.directory == second_preview.directory == base / "output" / "미리보기"
@@ -110,10 +113,10 @@ def self_test(output):
             many_result = base / "many_result.json"
             many_result.write_text(json.dumps([{"file": "b.json", "new": "B"}, {"file": "a.json", "new": "A"}]), encoding="utf-8")
             collection, exports = load_samples(many), load_samples(many_result)
-            file_profile = {"schema_version": 1, "name": "many files", "source": {"key": {"meta": "file_name"}},
+            file_rule = {"schema_version": 1, "name": "many files", "source": {"key": {"meta": "file_name"}},
                             "result": {"key": "/file"}, "rules": [{"kind": "field", "from": "/new", "to": "/label"}]}
-            graph = import_profile(file_profile, collection, exports)
-            check = preview_profile(file_profile, graph.source_rows, graph.result_rows, collection.meta)
+            graph = import_rule(file_rule, collection, exports)
+            check = preview_rule(file_rule, graph.source_rows, graph.result_rows, collection.meta)
             assert collection.file_count == 2 and check["counts"] == {"updated": 2}, check
             assert check["all_source_key_counts"] == {"matched": 2}
             from label_porter.json_viewer import JsonViewer
@@ -132,12 +135,12 @@ def self_test(output):
             viewer.browser.query.set('b.json'); viewer.browser.filter()
             assert len(viewer.browser.filtered) == 1
             viewer.window.destroy()
-            chosen = run([many/'a.json'], [many_result], base/'selected_output', file_profile)
+            chosen = run([many/'a.json'], [many_result], base/'selected_output', file_rule)
             assert chosen.summary['source_records'] == 1 and chosen.summary['status'] != 'failed'
             assert (chosen.directory/'data/a.json').is_file() and not (chosen.directory/'data/b.json').exists()
             from label_porter.rules import apply_record
             from label_porter.config import validate_config
-            rebuild_profile = validate_config({
+            rebuild_rule = validate_config({
                 "schema_version": 1, "name": "rebuild check",
                 "source": {"key": "/id"}, "result": {"key": "/id"},
                 "rules": [{"kind": "rebuild_items", "from": "/items", "to": "/items",
@@ -146,13 +149,13 @@ def self_test(output):
                                      {"kind": "field", "from": "/text", "to": "/text", "allow_create": True}]}]})
             rebuilt, _, _, state = apply_record({"items": [{"id": 10, "text": "old"}]},
                                                 {"items": [{"id": 99, "text": "new"}, {"id": 100, "text": "added"}]},
-                                                rebuild_profile, {})
+                                                rebuild_rule, {})
             assert state == "updated" and rebuilt["items"] == [{"id": 1, "text": "new"}, {"id": 2, "text": "added"}]
             from label_porter.pair_preview import load_preview, match_preview
             preview_source, preview_result = base / 'rebuild_source.json', base / 'rebuild_result.json'
             preview_source.write_text(json.dumps({'id': 1, 'items': [{'id': 10, 'text': 'old'}]}), encoding='utf-8')
             preview_result.write_text(json.dumps({'id': 1, 'items': [{'id': 10, 'text': 'new'}]}), encoding='utf-8')
-            rebuild_pair = match_preview(load_preview(rebuild_profile, preview_source, [preview_result]))
+            rebuild_pair = match_preview(load_preview(rebuild_rule, preview_source, [preview_result]))
             old_text = next(row for row in rebuild_pair['rows'] if row.get('target_path') == '/items/0/text')
             assert old_text['source'] == '"old"' and old_text['comparison'] == 'id'
             assert rebuild_pair['output']['items'] == [{'id': 1, 'text': 'new'}]
@@ -185,7 +188,7 @@ def self_test(output):
             assert app.mapping.preview.pair["output"]["label"] == "easy"
             app._close_mapping(); app._close_builder()
         root.destroy()
-        Path(output).write_text(json.dumps({"ok": True, "tk": True, "profiles": 4, "engine": True, "original_preserved": True, "split_output": True, "date_sequence": True, "reusable_preview": True, "media_feature_removed": True, "ai_guide_bundled": True, "general_project_help": True, "inline_help": True, "shared_navigation": True, "four_step_workflow": True, "automatic_data_preview": True, "ai_rule_roundtrip": True, "multiple_sample_files": True, "per_file_identity": True, "ai_first_workflow": True, "readonly_field_review": True, "inline_rule_inspection": True, "explicit_next_step": True, "easy_rules": True}), encoding="utf-8")
+        Path(output).write_text(json.dumps({"ok": True, "tk": True, "rules": 4, "engine": True, "original_preserved": True, "split_output": True, "date_sequence": True, "reusable_preview": True, "media_feature_removed": True, "ai_guide_bundled": True, "general_project_help": True, "inline_help": True, "shared_navigation": True, "four_step_workflow": True, "automatic_data_preview": True, "ai_rule_roundtrip": True, "multiple_sample_files": True, "per_file_identity": True, "ai_first_workflow": True, "readonly_field_review": True, "inline_rule_inspection": True, "explicit_next_step": True, "easy_rules": True}), encoding="utf-8")
         return 0
     except Exception:
         Path(output).write_text(json.dumps({"ok": False, "error": traceback.format_exc()}), encoding="utf-8")

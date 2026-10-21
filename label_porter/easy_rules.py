@@ -233,11 +233,11 @@ def select_key(inputs, path, cancel=lambda: False, result_path=None):
     result_records = [(key, *row) for key, row in zip(right, inputs.incoming)]
     found = {key: row for key, row in zip(right, inputs.incoming)
              if key is not None and right_counts[key] == 1 and key in left_counts}
-    profile = {"schema_version": 1, "name": "간편 규칙", "source": {**inputs.source_spec, "key": path},
+    rule_config = {"schema_version": 1, "name": "간편 규칙", "source": {**inputs.source_spec, "key": path},
                "result": {**inputs.result_spec, "key": result_path}, "rules": [{"kind": "field", "from": result_path, "to": path}]}
     checks = _length_checks(inputs.source_fields[path], "source") + _length_checks(inputs.result_fields[result_path], "result")
-    if checks: profile["checks"] = checks
-    data = PreviewData(profile, inputs.originals, left, left_counts, found, right_counts,
+    if checks: rule_config["checks"] = checks
+    data = PreviewData(rule_config, inputs.originals, left, left_counts, found, right_counts,
                        len(inputs.incoming), sum(k is None for k in right), inputs.fingerprint, result_records)
     data.catalog = build_catalog(data, checkpoint)
     samples = [(row[0], found[key][0]) for key, row in zip(left, inputs.originals)
@@ -293,7 +293,7 @@ def connection_option(inputs, data, target, incoming_path, skip_empty=False):
     """One explicit destination/source selection, compiled without guessed transforms."""
     if target not in inputs.source_fields or incoming_path not in inputs.result_fields:
         raise DataError("원본 대상과 가져올 보완 필드를 각각 선택하세요.")
-    if related(target, data.profile["source"]["key"]):
+    if related(target, data.rule_config["source"]["key"]):
         raise DataError("같은 데이터를 찾는 기준 필드는 수정할 수 없습니다.")
     a, b = inputs.source_fields[target], inputs.result_fields[incoming_path]
     kinds = (a.kinds | b.kinds) - ({"null"} if skip_empty else set())
@@ -320,16 +320,16 @@ def connection_option(inputs, data, target, incoming_path, skip_empty=False):
             "checks": _length_checks(a, "source") + _length_checks(b, "result")}
 
 
-def make_profile(data, options, selected, name="데이터로 만든 규칙", check_times=True):
+def make_rule(data, options, selected, name="데이터로 만든 규칙", check_times=True):
     selected = set(selected)
     available = {item["path"]: item for item in options}
     if not selected or not selected <= available.keys():
         raise DataError("반영할 항목을 한 개 이상 선택하세요.")
-    profile = copy.deepcopy(data.profile)
-    profile["name"] = name.strip() or "데이터로 만든 규칙"
-    profile["description"] = "선택한 보완 필드의 값을 원본 대상에 복사합니다. 선택하지 않은 필드는 원본 유지. 목록은 전체 반영하며 ID·시간·전사를 재생성하지 않습니다. 빈 값의 처리 정책은 각 규칙을 따릅니다."
+    rule_config = copy.deepcopy(data.rule_config)
+    rule_config["name"] = name.strip() or "데이터로 만든 규칙"
+    rule_config["description"] = "선택한 보완 필드의 값을 원본 대상에 복사합니다. 선택하지 않은 필드는 원본 유지. 목록은 전체 반영하며 ID·시간·전사를 재생성하지 않습니다. 빈 값의 처리 정책은 각 규칙을 따릅니다."
     types = {"str": "string", "int": "integer", "float": "number", "bool": "boolean", "list": "array", "dict": "object", "NoneType": "null"}
-    profile["rules"] = []
+    rule_config["rules"] = []
     for path in sorted(selected):
         if any(other != path and related(path, other) for other in selected):
             raise DataError("목록 전체와 그 안의 개별 값을 동시에 선택할 수 없습니다. 한 가지 반영 방식을 선택하세요.")
@@ -343,8 +343,8 @@ def make_profile(data, options, selected, name="데이터로 만든 규칙", che
             rule["when"] = [{"left": incoming_path, "op": "exists"}, {"left": incoming_path, "op": "nonempty"}]
         if kinds & {"dict", "list"}:
             rule["allow_container_replace"] = True
-        profile["rules"].append(rule)
+        rule_config["rules"].append(rule)
     if check_times and "/Segmentation/eojeols" in selected:
-        profile["assertions"] = [{"kind": "intervals", "path": "/Segmentation/eojeols",
+        rule_config["assertions"] = [{"kind": "intervals", "path": "/Segmentation/eojeols",
                                   "start": "/start", "end": "/end", "ordered": False}]
-    return validate_config(profile)
+    return validate_config(rule_config)

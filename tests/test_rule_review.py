@@ -7,15 +7,15 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from label_porter.config import load_config
-from label_porter.rule_review import RuleReview, profile_connections, describe_expression
+from label_porter.rule_review import RuleReview, rule_connections, describe_expression
 from label_porter.ui import setup_style
 
 
 class ReviewModelTests(unittest.TestCase):
     def test_nested_keys_guards_transforms_and_paths_are_shown_without_mutation(self):
-        profile = load_config(Path('profiles/013_audio.json'))
-        before = copy.deepcopy(profile)
-        rows = profile_connections(profile)
+        rule_config = load_config(Path('rules/013_audio.json'))
+        before = copy.deepcopy(rule_config)
+        rows = rule_connections(rule_config)
         self.assertEqual([r['kind'] for r in rows], ['key', 'items', 'key', 'guard', 'field', 'field', 'field'])
         self.assertEqual(rows[4]['source'], '/Segmentation/eojeols[]/text')
         self.assertIn('/orthographic_1/data[]/value/name_J2REGU', rows[4]['result'])
@@ -23,15 +23,15 @@ class ReviewModelTests(unittest.TestCase):
         self.assertIn('정수 변환', rows[2]['result'])
         self.assertIn('앞뒤 공백 제거', rows[3]['source'])
         rows[1]['raw']['require_same_keys'] = False
-        self.assertEqual(profile, before)
+        self.assertEqual(rule_config, before)
 
     def test_expected_root_scopes_literals_and_computed_lists_are_not_hidden(self):
-        profile = {'schema_version':1,'name':'complex','source':{'key':'/id'},'result':{'key':'/id'},'rules':[
+        rule_config = {'schema_version':1,'name':'complex','source':{'key':'/id'},'result':{'key':'/id'},'rules':[
             {'kind':'field','from':{'scope':'root_result','path':'/final','transforms':[{'op':'scale','value':.001}]},
              'to':'/time','expected':{'literal':0},'when':[{'left':'/ok','op':'eq','value':True}]},
             {'kind':'items','from':{'path':'/serialized','transforms':[{'op':'parse_json'}]},'to':'/parts',
              'source_key':'/id','result_key':'/id','rules':[{'kind':'field','from':'/value','to':'/text'}]}]}
-        rows = profile_connections(profile)
+        rows = rule_connections(rule_config)
         self.assertIn('전체 결과 레코드 · /final', rows[1]['result'])
         self.assertIn('0.001', rows[1]['result'])
         self.assertEqual(rows[2]['result'], '고정값 0')
@@ -40,13 +40,13 @@ class ReviewModelTests(unittest.TestCase):
         self.assertNotIn('/serialized[]', rows[-1]['result'])
         self.assertEqual(describe_expression({'scope':'root_original','path':'/id'}, source_prefix='/parts[]'), '전체 보완 전 레코드 · /id')
 
-    def test_bundled_profiles_preserved_exactly(self):
-        for path in Path('profiles').glob('*.json'):
-            profile = load_config(path)
-            before = copy.deepcopy(profile)
-            rows = profile_connections(profile)
+    def test_bundled_rules_preserved_exactly(self):
+        for path in Path('rules').glob('*.json'):
+            rule_config = load_config(path)
+            before = copy.deepcopy(rule_config)
+            rows = rule_connections(rule_config)
             self.assertTrue(rows, path)
-            self.assertEqual(profile, before)
+            self.assertEqual(rule_config, before)
 
 
 class ReviewUiTests(unittest.TestCase):
@@ -56,16 +56,16 @@ class ReviewUiTests(unittest.TestCase):
         except tk.TclError:
             self.skipTest('Tk unavailable')
         setup_style(self.root)
-        self.profile = load_config(Path('profiles/013_audio.json'))
+        self.rule_config = load_config(Path('rules/013_audio.json'))
         self.requests, self.accepted = [], []
-        self.review = RuleReview(self.root, self.profile, lambda:self.accepted.append(True), lambda:None)
+        self.review = RuleReview(self.root, self.rule_config, lambda:self.accepted.append(True), lambda:None)
         self.root.update()
 
     def tearDown(self):
         self.review._close(); self.root.destroy()
 
-    def test_search_select_and_all_tabs_leave_profile_identical(self):
-        before = copy.deepcopy(self.profile)
+    def test_search_select_and_all_tabs_leave_rule_identical(self):
+        before = copy.deepcopy(self.rule_config)
         self.review.query.set('/start')
         self.assertEqual(len(self.review.visible_rows()), 1)
         self.review.query.set(''); self.review.filter_kind.set('기존값·동일성 검사')
@@ -81,10 +81,10 @@ class ReviewUiTests(unittest.TestCase):
         self.assertEqual(str(self.review.detail['state']), 'disabled')
         self.assertEqual(str(self.review.raw_box['state']), 'disabled')
         self.assertFalse(self.review.canvas.bind('<B1-Motion>'))
-        self.assertEqual(self.review.profile, before)
+        self.assertEqual(self.review.rule_config, before)
         self.review.apply_button.invoke()
         self.assertEqual(self.accepted, [True])
-        self.assertEqual(self.profile, before)
+        self.assertEqual(self.rule_config, before)
 
     def test_preview_is_optional_and_read_only(self):
         self.review.pages.select(1)
@@ -96,14 +96,14 @@ class ReviewUiTests(unittest.TestCase):
         self.assertEqual(self.accepted, [True])
         self.assertTrue(self.review.preview.closed)
 
-    def test_profile_only_reuses_nested_connections_without_creating_a_data_preview(self):
+    def test_rule_only_reuses_nested_connections_without_creating_a_data_preview(self):
         with patch('label_porter.rule_review.PairPreview', side_effect=AssertionError('Unexpected file loader')):
-            panel = RuleReview(self.root, self.profile, lambda: None, lambda: None, profile_only=True, external_navigation=True)
+            panel = RuleReview(self.root, self.rule_config, lambda: None, lambda: None, rule_only=True, external_navigation=True)
         try:
             self.root.update()
             self.assertIsNone(panel.preview)
-            self.assertEqual(panel.rows, profile_connections(self.profile))
-            self.assertEqual(json.loads(panel.raw_box.get('1.0', 'end')), self.profile)
+            self.assertEqual(panel.rows, rule_connections(self.rule_config))
+            self.assertEqual(json.loads(panel.raw_box.get('1.0', 'end')), self.rule_config)
             panel.query.set('/start')
             self.assertEqual(len(panel.visible_rows()), 1)
             panel.query.set('')

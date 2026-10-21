@@ -14,7 +14,7 @@ from . import __version__
 from .data_input_ui import DataInputPanel
 from .input_files import source_paths
 from .config import load_config, validate_config
-from .rule_review import RuleReview, profile_connections
+from .rule_review import RuleReview, rule_connections
 from .reports import STATUS, ISSUES
 from .ui import INK, MUTED, ScrollPage, card, setup_style
 from .workflow import Workflow, resource_directory, default_output_directory, AI_GUIDE_FILENAME
@@ -51,15 +51,16 @@ class App(Workflow):
         self.rule_file = tk.StringVar(value="아직 불러온 파일이 없습니다.")
         self.rule_summary = tk.StringVar(value="아직 프로젝트 규칙이 없습니다.")
         self.rule_title = tk.StringVar(value="규칙을 준비해 주세요")
-        self.run_summary, self.profile_name, self.description = tk.StringVar(), tk.StringVar(), tk.StringVar()
+        self.run_summary, self.rule_name, self.description = tk.StringVar(), tk.StringVar(), tk.StringVar()
         self.input_hint = tk.StringVar(value="양쪽 모두 폴더 또는 파일 다중 선택이 가능합니다. 폴더를 선택하면 기존 파일 선택을 대신합니다.")
         self.source_count = tk.StringVar(value="선택한 원본 없음")
         self.result_count = tk.StringVar(value="선택한 결과 파일 없음")
-        self.profiles = {c["name"]: (p, c) for p in sorted((resource_directory()/"profiles").glob("*.json")) for c in [load_config(p)]}
+        self.bundled_rules = {c["name"]: (p, c) for p in sorted((resource_directory()/"rules").glob("*.json")) for c in [load_config(p)]}
         self.settings_path = Path(os.environ.get("APPDATA", str(Path.home()))) / "LabelPorter" / "settings.json"
         self.ai_guide_text = (resource_directory()/AI_GUIDE_FILENAME).read_text(encoding="utf-8")
         self.help_text = (resource_directory()/"사용설명.md").read_text(encoding="utf-8")
         self.capabilities_text = (resource_directory()/"후처리_지원범위.md").read_text(encoding="utf-8")
+        self.architecture_text = (resource_directory()/"아키텍처_및_규칙엔진.md").read_text(encoding="utf-8")
         self._config_text = ""
         self._build()
         self._load_settings()
@@ -135,7 +136,7 @@ class App(Workflow):
         project, inputs, _, review = [p.body for p in self.step_pages]
         group = card(project, "프로젝트 규칙", "저장된 규칙을 불러오거나, 원본과 보완 데이터를 넣고 반영할 내용만 선택해 규칙을 만드세요.")
         row = ttk.Frame(group, style="Card.TFrame"); row.pack(fill="x", pady=(2, 12))
-        self.import_rule_button = ttk.Button(row, text="규칙 파일 불러오기…", command=self._load_profile, style="Primary.TButton")
+        self.import_rule_button = ttk.Button(row, text="규칙 파일 불러오기…", command=self._load_rule, style="Primary.TButton")
         self.import_rule_button.pack(side="left")
         self.create_rule_button = ttk.Button(row, text="데이터로 규칙 만들기", command=self._show_builder)
         self.create_rule_button.pack(side="left", padx=(10, 0))
@@ -150,7 +151,7 @@ class App(Workflow):
         self.rule_inspector_empty = ttk.Label(self.rule_inspector_host, text="규칙을 불러오면 필드 연결과 전체 JSON이 여기에 표시됩니다.", style="Muted.TLabel")
         self.rule_inspector_empty.pack(anchor="w", padx=10, pady=14)
         self.rule_inspector_host.configure(height=54)
-        self.save_rule_button = ttk.Button(group, text="규칙 내보내기", command=self._save_profile, state="disabled")
+        self.save_rule_button = ttk.Button(group, text="규칙 내보내기", command=self._save_rule, state="disabled")
         self.save_rule_button.pack(anchor="w", pady=(14, 0))
         group = card(project, "이후 진행 순서")
         for title, explanation in (("02  데이터 선택", "원본과 보완 데이터의 폴더 또는 파일 · 저장 위치를 선택합니다."),
@@ -201,15 +202,17 @@ class App(Workflow):
         self.builder_host = ttk.Frame(self.content)
         self.help_host = ttk.Frame(self.content)
         self.tabs = ttk.Notebook(self.help_host); self.tabs.pack(fill="both", expand=True)
-        ai, help_page, capabilities = [ttk.Frame(self.tabs, padding=12) for _ in range(3)]
+        ai, help_page, capabilities, architecture = [ttk.Frame(self.tabs, padding=12) for _ in range(4)]
         self.tabs.add(ai, text="AI 규칙 작성 가이드"); self.tabs.add(help_page, text="사용 방법")
         self.tabs.add(capabilities, text="후처리 지원 범위")
+        self.tabs.add(architecture, text="아키텍처 · 규칙 엔진")
         row = ttk.Frame(ai); row.pack(fill="x", pady=(0, 12))
         ttk.Button(row, text="가이드 복사", command=self._copy_ai_guide).pack(side="left")
         ttk.Button(row, text="가이드 저장", command=self._save_ai_guide).pack(side="left", padx=8)
         self.ai_guide_box = self._document_view(ai, self.ai_guide_text)
         self.help_box = self._document_view(help_page, self.help_text)
         self.capabilities_box = self._document_view(capabilities, self.capabilities_text)
+        self.architecture_box = self._document_view(architecture, self.architecture_text)
 
     @staticmethod
     def _table(parent, columns, height):
@@ -339,7 +342,7 @@ class App(Workflow):
         self.route = "help"
         self.tabs.select(tab)
         self.page_title.set("사용 방법")
-        self.page_caption.set("진행 순서와 AI 규칙 작성 가이드를 확인하세요. 돌아가면 보던 단계에서 계속할 수 있습니다.")
+        self.page_caption.set("작성 가이드·사용 방법·지원 범위·프로그램 구조를 확인하세요. 돌아가면 보던 단계에서 계속할 수 있습니다.")
         self.status.set("작업의 입력값과 프리뷰 상태를 유지하고 있습니다.")
         self._sync_actions()
 
@@ -376,9 +379,9 @@ class App(Workflow):
         if self.builder:
             self.builder.close(); self.builder.destroy(); self.builder = None
 
-    def _finish_builder(self, profile, inputs, data):
+    def _finish_builder(self, rule_config, inputs, data):
         self._close_mapping()
-        self._set_config(profile)
+        self._set_config(rule_config)
         self.source_files = []; self.result_folder = ""
         self.source.set(inputs.source); self._render_sources()
         self.result_paths = list(inputs.result_files); self._render_results()
@@ -392,7 +395,7 @@ class App(Workflow):
     def _set_config(self, config):
         config = validate_config(config)
         self._config_text = json.dumps(config, ensure_ascii=False, indent=2)
-        self.profile_name.set(config["name"]); self.description.set(config.get("description", ""))
+        self.rule_name.set(config["name"]); self.description.set(config.get("description", ""))
         self._invalidate_rule(); self._summarize_rule(config)
         self._inspect_rule(config)
         self.save_rule_button.configure(state="normal")
@@ -407,16 +410,16 @@ class App(Workflow):
     def _summarize_rule(self, config):
         self.rule_title.set(config["name"])
         checks = sum(len(config.get(k, [])) for k in ("include_when", "checks", "assertions"))
-        connections = profile_connections(config)
+        connections = rule_connections(config)
         self.rule_summary.set(f"수정 필드 {sum(r['kind']=='field' for r in connections)}개 · 목록 {sum(r['kind'] in ('items', 'rebuild_items') for r in connections)}개 · 레코드 조건 / 검증 {checks}개\n규칙에 정의된 연결 · 읽기 전용 · 실제 데이터 비교는 데이터 선택 후 확인합니다.")
 
     def _inspect_rule(self, config):
-        if self.rule_inspector and self.rule_inspector.profile == config: return
+        if self.rule_inspector and self.rule_inspector.rule_config == config: return
         if self.rule_inspector: self.rule_inspector._close(notify=False)
         self.rule_inspector_empty.pack_forget()
         self.rule_inspector_host.configure(height=380)
         self.rule_inspector = RuleReview(self.rule_inspector_host, config, lambda: None, lambda: None,
-                                         external_navigation=True, profile_only=True)
+                                         external_navigation=True, rule_only=True)
 
     def _focus_current_rule(self):
         self.root.update_idletasks()
@@ -464,7 +467,7 @@ class App(Workflow):
             self.status.set("전체 데이터 검증 후 집계와 보고서를 확인하세요."); self._save_settings()
         except (ValueError, OSError) as exc: self.status.set(f"입력 확인: {exc}")
 
-    def _load_profile(self):
+    def _load_rule(self):
         if self.running: return
         path = filedialog.askopenfilename(title="AI / 저장된 프로젝트 규칙", filetypes=[("규칙 JSON", "*.json")], parent=self.root)
         if path:
@@ -484,10 +487,10 @@ class App(Workflow):
                 self._save_settings()
             except (OSError, ValueError, TypeError, KeyError) as exc: self.status.set(f"규칙 불러오기: {exc}")
 
-    def _save_profile(self):
+    def _save_rule(self):
         try:
             config = self._get_config()
-            path = filedialog.asksaveasfilename(title="규칙 내보내기", defaultextension=".json", initialfile="project_profile.json", filetypes=[("JSON", "*.json")], parent=self.root)
+            path = filedialog.asksaveasfilename(title="규칙 내보내기", defaultextension=".json", initialfile="project_rule.json", filetypes=[("JSON", "*.json")], parent=self.root)
             if path:
                 Path(path).write_text(json.dumps(config, ensure_ascii=False, indent=2)+"\n", encoding="utf-8"); self.status.set(f"규칙 저장 완료: {path}")
         except (OSError, ValueError, TypeError, KeyError) as exc: self.status.set(f"규칙 저장: {exc}")
@@ -614,7 +617,10 @@ class App(Workflow):
             self.split_output.set(s.get("split_output", True))
             self.result_paths = [p for p in s.get("results", []) if Path(p).is_file()]; self._render_results()
             if s.get("config"): self._set_config(s["config"])
-            elif s.get("profile") in self.profiles: self._set_config(self.profiles[s["profile"]][1])
+            else:
+                # Older settings stored the bundled rule name under this legacy key.
+                rule_name = s.get("rule", s.get("profile"))
+                if rule_name in self.bundled_rules: self._set_config(self.bundled_rules[rule_name][1])
             self.rule_file.set(s.get("rule_file", "최근 저장한 프로젝트 규칙"))
             if self._config_text: self.status.set("최근 작업의 규칙과 입력 위치를 복원했습니다. 확인 후 계속하세요.")
         except (OSError, ValueError, TypeError, KeyError): pass

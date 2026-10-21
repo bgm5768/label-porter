@@ -10,7 +10,8 @@ from urllib.parse import unquote, urlsplit
 from markdown_it import MarkdownIt
 from tkinterweb import HtmlFrame
 
-DOCUMENTS = {"AI_규칙작성_가이드.md": 0, "사용설명.md": 1, "후처리_지원범위.md": 2}
+DOCUMENTS = {"AI_규칙작성_가이드.md": 0, "사용설명.md": 1, "후처리_지원범위.md": 2,
+             "아키텍처_및_규칙엔진.md": 3}
 STYLE = """
 body { margin: 0; padding: 26px 32px; background: #fff; color: #253044;
        font-family: "Malgun Gothic", sans-serif; font-size: 16px; line-height: 1.75; }

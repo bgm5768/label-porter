@@ -140,7 +140,7 @@ def _rules(rules, depth=0):
 
 
 def validate_config(config):
-    # Import v1.1 profiles without reviving the removed media-copy feature.
+    # Import v1.1 rules without reviving the removed media-copy feature.
     if isinstance(config, dict):
         config = {key: value for key, value in config.items() if key != "assets"}
     _keys(config, {"schema_version", "name", "description", "source", "result", "include_when", "checks", "rules", "assertions"},

@@ -14,11 +14,11 @@ from .ui import BG, INK, MUTED
 
 
 class PairPreview(ttk.Frame):
-    def __init__(self, parent, profile, source_hint="", result_hints=(), *, configured=False, preloaded=None):
+    def __init__(self, parent, rule_config, source_hint="", result_hints=(), *, configured=False, preloaded=None):
         super().__init__(parent)
         self.configured, self.example_index = configured, 0
         self.auto_job = None
-        self.profile, self.closed, self.busy = profile, False, False
+        self.rule_config, self.closed, self.busy = rule_config, False, False
         self.cache = self.pair = None
         self.filtered = []
         self.page = 1
@@ -83,7 +83,7 @@ class PairPreview(ttk.Frame):
                 button = ttk.Button(inputs, text="파일 선택…", command=command)
                 button.grid(row=row, column=2, padx=(8, 0), pady=3)
                 self.controls.append(button)
-        source_key = self.profile["source"]["key"]
+        source_key = self.rule_config["source"]["key"]
         if not self.configured and isinstance(source_key, dict) and source_key.get("meta") == "relative_path":
             ttk.Label(inputs, text="원본 기준 폴더").grid(row=2, column=0, sticky="w")
             ttk.Entry(inputs, textvariable=self.root_path, state="readonly").grid(row=2, column=1, sticky="ew")
@@ -373,9 +373,9 @@ class PairPreview(ttk.Frame):
             try:
                 def checkpoint():
                     if cancel.is_set(): raise ValueError("프리뷰 불러오기를 중단했습니다.")
-                stamp = fingerprint(source, results, root, self.profile["source"].get("glob", "**/*.json"), checkpoint) if cached else None
+                stamp = fingerprint(source, results, root, self.rule_config["source"].get("glob", "**/*.json"), checkpoint) if cached else None
                 data = cached if cached and cached.fingerprint == stamp else load_preview(
-                    self.profile, source, results, root, progress=lambda text: send("progress", text), cancel=cancel.is_set)
+                    self.rule_config, source, results, root, progress=lambda text: send("progress", text), cancel=cancel.is_set)
                 if cancel.is_set():
                     return
                 send("loaded", data)

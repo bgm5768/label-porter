@@ -69,13 +69,13 @@ def main():
             root.geometry('1280x880+20+20'); root.update()
             app.back_button.invoke()
             assert app.current_step == 0
-            profile = {'schema_version':1,'name':'문장 보완 프로젝트 · AI 규칙',
+            rule_config = {'schema_version':1,'name':'문장 보완 프로젝트 · AI 규칙',
                        'source':{'key':'/id'},'result':{'key':'/ref'},
                        'rules':[{'kind':'field','from':'/new','to':'/label','type':'string','nonempty':True}]}
-            rule_path = folder/'project_profile.json'
-            rule_path.write_text(json.dumps(profile), encoding='utf-8')
+            rule_path = folder/'project_rule.json'
+            rule_path.write_text(json.dumps(rule_config), encoding='utf-8')
             with patch('label_porter.gui.filedialog.askopenfilename', return_value=str(rule_path)):
-                app._load_profile()
+                app._load_rule()
             assert app.current_step == 1
             app.source.set(str(originals)); app.result_paths = [str(results)]
             app.output.set(str(folder/'포팅결과')); app._render_results()

@@ -35,25 +35,25 @@ def extract(path, spec):
     return [row for _, _, row in records(read_document(path), spec)]
 
 
-def exercise(source, result, profile_path, destination):
-    source, result, profile_path, destination = [p.resolve() for p in (source, result, profile_path, destination)]
+def exercise(source, result, rule_path, destination):
+    source, result, rule_path, destination = [p.resolve() for p in (source, result, rule_path, destination)]
     if destination.exists() or destination.is_relative_to(source):
         raise ValueError('테스트 저장 위치는 존재하지 않는 별도 폴더여야 합니다.')
-    profile = load_config(profile_path)
-    incoming = extract(result, profile['result'])
+    rule_config = load_config(rule_path)
+    incoming = extract(result, rule_config['result'])
     counts = Counter(row.get('sound_id') for row in incoming if isinstance(row, dict))
     by_key = {row['sound_id']: row for row in incoming if isinstance(row, dict) and counts[row.get('sound_id')] == 1}
     chosen = []
-    for path in sorted(source.glob(profile['source'].get('glob', '**/*.json'))):
+    for path in sorted(source.glob(rule_config['source'].get('glob', '**/*.json'))):
         try:
-            rows = extract(path, profile['source'])
+            rows = extract(path, rule_config['source'])
             if len(rows) != 1:
                 continue
             original = rows[0]
             final = by_key[original['sound_id']]
             if not final['Segmentation']['eojeols']:
                 continue
-            _, _, _, status = apply_record(original, final, profile, {})
+            _, _, _, status = apply_record(original, final, rule_config, {})
             if status not in ('updated', 'unchanged'):
                 continue
         except (ValueError, KeyError, TypeError, IndexError):
@@ -63,7 +63,7 @@ def exercise(source, result, profile_path, destination):
             break
     if len(chosen) != 30 or len({item[1]['sound_id'] for item in chosen}) != 30:
         raise ValueError('유일하게 연결되고 검증을 통과하는 오디오 레코드 30건이 필요합니다.')
-    preserved = {str(path): digest(path) for path in [result, profile_path, *(p for p, _, _ in chosen)]}
+    preserved = {str(path): digest(path) for path in [result, rule_path, *(p for p, _, _ in chosen)]}
     destination.mkdir(parents=True, exist_ok=False)
     expectations = []
     groups = ['정상 반영'] * 5 + ['review'] * 5 + ['excluded'] * 5 + ['unmatched 원본만'] * 5 + ['unmatched 보안만'] * 5 + ['file_errors 양쪽'] * 5
@@ -78,11 +78,11 @@ def exercise(source, result, profile_path, destination):
         original_dir, final_dir = case / '입력/원본', case / '입력/보안'
         original_dir.mkdir(parents=True)
         final_dir.mkdir(parents=True)
-        config = copy.deepcopy(profile)
-        config['name'] = profile['name'] + ' · examine 인위 오류 검증 전용'
+        config = copy.deepcopy(rule_config)
+        config['name'] = rule_config['name'] + ' · examine 인위 오류 검증 전용'
         config['source'].update(records_path='', record_mode='array' if combined_source else 'object')
         config['result'].update(records_path='', record_mode='array')
-        # Only the fixture profile excludes these IDs. Production rules are unchanged.
+        # Only the fixture rule excludes these IDs. Production rules are unchanged.
         config['include_when'] = [{'left': '/sound_id', 'op': 'ne', 'value': row['sound_id']} for _, row, _ in chosen[10:15]]
         validate_config(config)
         save(case / '규칙_검증전용.json', config)

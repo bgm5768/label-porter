@@ -57,6 +57,8 @@ def write_dashboard(directory, summary, catalog, examples):
     e = lambda value: html.escape(str(value), quote=True)
     counts = summary["category_counts"]
     preview = summary["preview"]
+    rule_name = summary.get("rule", summary.get("profile", ""))
+    rule_file = "profile.json" if not (directory.parent / "rule.json").is_file() and (directory.parent / "profile.json").is_file() else "rule.json"
     mode = "검증 미리보기 · 데이터 파일 미생성" if preview else "복사본 저장 결과"
     state = {"completed": "처리 완료", "completed_with_issues": "처리 완료 · 확인 필요",
              "failed": "실패 · 부분 결과", "cancelled": "중단 · 부분 결과"}.get(summary["status"], "진행 중")
@@ -94,7 +96,7 @@ def write_dashboard(directory, summary, catalog, examples):
         ("changes.jsonl", "변경 전후 JSONL", "필드별 변경 전후 값 전체"),
         ("review_details.jsonl", "검토 근거 JSONL", "검토 항목의 모든 사유와 근거"),
         ("summary.json", "처리 집계 JSON", "범위별 집계와 실행 정보"),
-        ("../profile.json", "사용한 규칙", "이번 실행에 적용한 규칙"),
+        ("../" + rule_file, "사용한 규칙", "이번 실행에 적용한 규칙"),
         ("../manifest.json", "파일 확인 명세", "입력·결과 경로와 파일 해시"),
         ("held_references.jsonl", "별도 보관 태그", "규칙에서 별도 검토로 지정한 태그"),
     )
@@ -102,8 +104,8 @@ def write_dashboard(directory, summary, catalog, examples):
     notice = summary.get("error") or "원본 파일은 변경하지 않았습니다. 검토·연결 누락 대상은 examine에서 확인하세요. 데이터 내용의 정답 여부는 별도 검수가 필요합니다."
     controls = CONTROLS.replace("검토 항목 검색", "선택한 분류에서 검색").replace("전체 항목에서 파일명, ID, 사유 검색", "파일명 · KEY · 필드 경로 · 처리 사유")
     doc = f'''<!doctype html><html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>처리 결과서 · {e(summary['profile'])}</title><style>{STYLE}{CSS}</style></head><body><main>
-<header class="hero"><div><div class="eyebrow">LABEL PORTER / PROCESSING REPORT</div><h1>라벨 데이터 처리 결과서</h1><p>{e(summary['profile'])}</p></div><span class="badge {badge}">{state}</span></header>
+<title>처리 결과서 · {e(rule_name)}</title><style>{STYLE}{CSS}</style></head><body><main>
+<header class="hero"><div><div class="eyebrow">LABEL PORTER / PROCESSING REPORT</div><h1>라벨 데이터 처리 결과서</h1><p>{e(rule_name)}</p></div><span class="badge {badge}">{state}</span></header>
 <div class="run-info"><b>{mode}</b><span class="muted">{e(summary['started_at'])} → {e(summary.get('finished_at',''))}</span><span>원본 보존 · 로컬 처리</span></div>
 <div class="notice">{e(notice)}</div><nav class="cards" aria-label="분류별 집계">{cards}</nav>
 <p class="muted">카드를 누르면 해당 목록으로 이동합니다. 원본과 보완은 서로 다른 입력 집계이며, 처리 완료·검토·변경 필드 등은 서로 겹칠 수 있어 전체 카드를 합산하지 않습니다.

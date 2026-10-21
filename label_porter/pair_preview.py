@@ -59,7 +59,7 @@ def matching_indices(data):
 
 @dataclass
 class PreviewData:
-    profile: dict
+    rule_config: dict
     originals: list
     source_keys: list
     source_counts: Counter
@@ -72,9 +72,9 @@ class PreviewData:
     catalog: list = field(default_factory=list)
 
 
-def load_preview(profile, source, results, root="", progress=None, cancel=None):
+def load_preview(rule_config, source, results, root="", progress=None, cancel=None):
     """Index all selected inputs; ambiguous keys are never resolved by row order."""
-    profile = copy.deepcopy(validate_config(profile))
+    rule_config = copy.deepcopy(validate_config(rule_config))
     paths = [Path(path).expanduser().resolve() for path in results]
     def checkpoint():
         if cancel and cancel():
@@ -84,7 +84,7 @@ def load_preview(profile, source, results, root="", progress=None, cancel=None):
         raise DataError("플랫폼 결과 또는 보완 데이터 파일을 선택하세요.")
     if len(set(paths)) != len(paths):
         raise DataError("같은 결과 파일을 두 번 선택했습니다.")
-    layout = source_layout(source, profile["source"].get("glob", "**/*.json"), root, checkpoint)
+    layout = source_layout(source, rule_config["source"].get("glob", "**/*.json"), root, checkpoint)
     sources = list(layout.files.values())
     if not sources:
         raise DataError("규칙의 파일 패턴에 맞는 원본 JSON이 없습니다.")
@@ -106,13 +106,13 @@ def load_preview(profile, source, results, root="", progress=None, cancel=None):
     originals, source_keys, source_counts = [], [], Counter()
     for file_number, (relative, source_file) in enumerate(layout.files.items(), 1):
         source_meta = metadata(relative)
-        for doc, pointer, row in records(read(source_file, profile["source"], f"원본 {file_number:,}/{len(sources):,}개"), profile["source"]):
+        for doc, pointer, row in records(read(source_file, rule_config["source"], f"원본 {file_number:,}/{len(sources):,}개"), rule_config["source"]):
             checkpoint()
             if not isinstance(row, dict):
                 raise DataError("원본 레코드가 JSON 객체가 아닙니다.")
             originals.append((row, source_meta, f"{relative.as_posix()} · doc:{doc}{pointer}"))
             try:
-                key = canonical_key(expression(profile["source"]["key"], context(row, source_meta)))
+                key = canonical_key(expression(rule_config["source"]["key"], context(row, source_meta)))
                 source_counts[key] += 1
             except ERRORS:
                 key = None
@@ -122,7 +122,7 @@ def load_preview(profile, source, results, root="", progress=None, cancel=None):
     found, counts, total, invalid = {}, Counter(), 0, 0
     result_records = []
     for path in paths:
-        spec = profile["result"]
+        spec = rule_config["result"]
         # Results default to auto, as in engine.run (including CSV JSON cells).
         document = read(path, {**spec, "format": spec.get("format", "auto")}, "보완 결과")
         for number, (doc, pointer, row) in enumerate(records(document, spec), 1):
@@ -147,9 +147,9 @@ def load_preview(profile, source, results, root="", progress=None, cancel=None):
                 progress(f"보완 결과 KEY 확인 · {total:,}건")
     checkpoint()
     if progress: progress("읽은 데이터의 변경 여부를 마지막으로 확인하고 있습니다…")
-    if fingerprint(source, paths, root, profile["source"].get("glob", "**/*.json"), checkpoint) != stamp:
+    if fingerprint(source, paths, root, rule_config["source"].get("glob", "**/*.json"), checkpoint) != stamp:
         raise DataError("읽는 동안 파일이 바뀌었습니다. 다시 불러오세요.")
-    data = PreviewData(profile, originals, source_keys, source_counts, found, counts, total, invalid, stamp,
+    data = PreviewData(rule_config, originals, source_keys, source_counts, found, counts, total, invalid, stamp,
                        result_records)
     if progress: progress("전체 레코드의 검색 목록을 준비하고 있습니다…")
     data.catalog = build_catalog(data, checkpoint)
@@ -273,9 +273,9 @@ def match_preview(data, index=0):
     incoming, result_meta, result_location = data.results[key]
     meta = {**source_meta, "result_file": result_meta["result_file"], "result_row": result_meta["result_row"]}
     rows = [{
-        "kind": "key", "source_path": data.profile["source"]["key"], "result_expr": data.profile["result"]["key"],
-        "source": display(expression(data.profile["source"]["key"], context(original, source_meta))),
-        "result": display(expression(data.profile["result"]["key"], context(incoming, result_meta))),
+        "kind": "key", "source_path": data.rule_config["source"]["key"], "result_expr": data.rule_config["result"]["key"],
+        "source": display(expression(data.rule_config["source"]["key"], context(original, source_meta))),
+        "result": display(expression(data.rule_config["result"]["key"], context(incoming, result_meta))),
         "evaluated": "", "note": "규칙의 KEY가 같은 레코드 한 쌍입니다.",
     }]
     visited = 0
@@ -309,7 +309,7 @@ def match_preview(data, index=0):
         })
     advisories = []
     try:
-        candidate, changes, notes, status = apply_record(original, incoming, data.profile, meta,
+        candidate, changes, notes, status = apply_record(original, incoming, data.rule_config, meta,
                                                         advisories, observer=observe)
         message = {"updated": f"반영 시 변경 {len(changes):,}곳", "unchanged": "반영할 값이 원본과 같습니다.",
                    "excluded": "반영 조건에 해당하지 않아 원본을 유지합니다."}[status]

@@ -8,8 +8,8 @@ from pathlib import Path
 
 from label_porter.engine import run
 from label_porter.formats import DataError
-from label_porter.mapping import (Scope, candidate_score, collect_fields, compile_profile,
-                                  load_sample, preview_profile)
+from label_porter.mapping import (Scope, candidate_score, collect_fields, compile_rule,
+                                  load_sample, preview_rule)
 from label_porter.rules import ReviewRequired, apply_record
 
 
@@ -34,7 +34,7 @@ class MappingTests(unittest.TestCase):
         return self.scope
 
     def config(self):
-        return compile_profile(self.scope, self.source, self.result, self.sp, self.rp, "테스트")
+        return compile_rule(self.scope, self.source, self.result, self.sp, self.rp, "테스트")
 
     def simple(self, source=None, result=None):
         scope = self.samples(source or {"id": "a", "label": "old", "keep": {"v": 1}},
@@ -149,10 +149,10 @@ class MappingTests(unittest.TestCase):
 
     def test_key_type_mismatch_needs_explicit_conversion(self):
         scope = self.simple({"id": 1, "label": "old"}, {"source_id": "1", "new": "new"})
-        report = preview_profile(self.config(), scope.source_rows, scope.result_rows, self.source.meta)
+        report = preview_rule(self.config(), scope.source_rows, scope.result_rows, self.source.meta)
         self.assertEqual(report["counts"], {"no_result": 1})
         scope.wires[0].result_transform = "정수로"
-        report = preview_profile(self.config(), scope.source_rows, scope.result_rows, self.source.meta)
+        report = preview_rule(self.config(), scope.source_rows, scope.result_rows, self.source.meta)
         self.assertEqual(report["counts"], {"updated": 1})
 
     def test_file_metadata_key_and_basename_transform(self):
@@ -160,16 +160,16 @@ class MappingTests(unittest.TestCase):
         key = scope.connect("@file_name", "/file", "key")
         key.result_transform = "파일명만"
         scope.connect("/label", "/new", "value")
-        report = preview_profile(self.config(), scope.source_rows, scope.result_rows, self.source.meta)
+        report = preview_rule(self.config(), scope.source_rows, scope.result_rows, self.source.meta)
         self.assertEqual(report["counts"], {"updated": 1})
         # A file name cannot disambiguate records within an aggregate JSON file.
-        report = preview_profile(self.config(), scope.source_rows * 2, scope.result_rows, self.source.meta)
+        report = preview_rule(self.config(), scope.source_rows * 2, scope.result_rows, self.source.meta)
         self.assertEqual(report["counts"], {"duplicate": 2})
 
     def test_preview_detects_duplicate_result_and_invalid_id_without_mutation(self):
         scope = self.simple()
         original = copy.deepcopy(scope.source_rows)
-        report = preview_profile(self.config(), scope.source_rows, scope.result_rows * 2 + [{}], self.source.meta)
+        report = preview_rule(self.config(), scope.source_rows, scope.result_rows * 2 + [{}], self.source.meta)
         self.assertEqual(report["counts"], {"duplicate": 1})
         self.assertEqual(report["invalid_result_keys"], 1)
         self.assertEqual(scope.source_rows, original)
@@ -179,7 +179,7 @@ class MappingTests(unittest.TestCase):
         incoming = [{"source_id": str(i), "new": "new"} for i in range(250)]
         scope = self.simple(rows, incoming)
         scope.result_rows.append(incoming[0].copy())
-        report = preview_profile(self.config(), scope.source_rows, scope.result_rows, self.source.meta)
+        report = preview_rule(self.config(), scope.source_rows, scope.result_rows, self.source.meta)
         self.assertEqual(report["sampled"], 120)
         self.assertEqual(report["counts"]["duplicate"], 1)
 

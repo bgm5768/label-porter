@@ -146,7 +146,7 @@ class WorkflowUiTests(unittest.TestCase):
             rule_file = self.base / 'ai_rules.json'
             rule_file.write_text(json.dumps(self.config()), encoding='utf-8')
             with patch('label_porter.gui.filedialog.askopenfilename', return_value=str(rule_file)):
-                app._load_profile()
+                app._load_rule()
             self.assertEqual(app.current_step, 0)
             self.assertIsNotNone(app.rule_inspector)
             app.primary_button.invoke(); self.root.update()
@@ -215,6 +215,14 @@ class WorkflowUiTests(unittest.TestCase):
             self.assertEqual(app.tabs.tab(2, "text"), "후처리 지원 범위")
             self.assertEqual(app.capabilities_box.source, app.capabilities_text)
             self.assertIn("<table>", app.capabilities_box.html_source)
+            app.tabs.select(3); self.root.update()
+            self.assertEqual(len(app.tabs.tabs()), 4)
+            self.assertEqual(app.tabs.tab(3, "text"), "아키텍처 · 규칙 엔진")
+            self.assertEqual(app.architecture_box.source, app.architecture_text)
+            self.assertIn('project_rule.json', app.architecture_box.html_source)
+            self.assertIn('<table>', app.architecture_box.html_source)
+            app.architecture_box.query.set('규칙'); app.architecture_box.find()
+            self.assertGreater(app.architecture_box.match_count, 0)
             app.back_button.invoke(); self.root.update()
             self.assertEqual(app.route, 'mapping')
             self.assertIs(app.mapping, board)
@@ -286,14 +294,14 @@ class WorkflowUiTests(unittest.TestCase):
         with patch.object(App, "_load_settings"):
             app = App(self.root); app.settings_path = self.base/'settings.json'
             app._set_config(self.config()); self.configure_inputs(app)
-            app.rule_file.set('saved-profile.json'); app._save_settings()
+            app.rule_file.set('saved-rule.json'); app._save_settings()
             app._set_config({**self.config(), 'name': 'other'})
             app.source.set(''); app.result_paths = []
         app._load_settings()
         self.assertEqual(app._get_config(), self.config())
         self.assertEqual(app.source.get(), str(self.source))
         self.assertEqual(app.result_paths, [str(self.rf)])
-        self.assertEqual(app.rule_file.get(), 'saved-profile.json')
+        self.assertEqual(app.rule_file.get(), 'saved-rule.json')
         self.assertFalse(app.connection_confirmed)
 
     def test_source_edit_after_preview_requires_revalidation_and_metrics_are_separate(self):
@@ -375,16 +383,16 @@ class WorkflowUiTests(unittest.TestCase):
             app = App(self.root); app._set_config(self.config()); self.configure_inputs(app)
             previous = app.rule_inspector
             original = self.sf.read_bytes()
-            path = self.base/'profile.json'; path.write_text('{}', encoding='utf-8')
+            path = self.base/'rule.json'; path.write_text('{}', encoding='utf-8')
             with patch('label_porter.gui.filedialog.askopenfilename', return_value=str(path)), \
                  patch('label_porter.rule_review.PairPreview', side_effect=AssertionError('No data preview before inputs')):
-                app._load_profile()
+                app._load_rule()
                 self.assertEqual(app.source.get(), str(self.source))
                 self.assertEqual(app._get_config(), self.config())
                 self.assertIs(app.rule_inspector, previous)
                 save.assert_not_called()
                 path.write_text(json.dumps({**self.config(), 'name': 'new rules'}), encoding='utf-8')
-                app._load_profile()
+                app._load_rule()
             self.assertEqual(app.current_step, 0)
             self.assertEqual(app.route, 'workflow')
             self.assertTrue(previous.closed)
@@ -433,7 +441,7 @@ class WorkflowUiTests(unittest.TestCase):
             app.output.set(str(chosen))
             rule = self.base/"rules.json"; rule.write_text(json.dumps(self.config()), encoding="utf-8")
             with patch("label_porter.gui.filedialog.askopenfilename", return_value=str(rule)):
-                app._load_profile()
+                app._load_rule()
             self.assertEqual(app.output.get(), str(chosen))
 
     def test_frozen_output_default_is_next_to_executable_not_temporary_resources(self):

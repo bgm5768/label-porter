@@ -9,7 +9,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from label_porter.config import validate_config
-from label_porter.easy_rules import analyze_inputs, select_key, make_profile, connection_option, key_stats
+from label_porter.easy_rules import analyze_inputs, select_key, make_rule, connection_option, key_stats
 from label_porter.formats import DataError
 from label_porter.gui import App
 from label_porter.rules import apply_record, ReviewRequired
@@ -54,9 +54,9 @@ class EasyRulesTests(unittest.TestCase):
         inputs, data, options, selected = self.prepare()
         self.assertEqual(inputs.candidates[0]["path"], "/sound_id")
         self.assertCountEqual(selected, ["/Segmentation/eojeols", "/RecordingMetadata/orthographic"])
-        profile = make_profile(data, options, selected)
-        validate_config(json.loads(json.dumps(profile)))
-        actual, _, _, status = apply_record(before, after, profile, {})
+        rule_config = make_rule(data, options, selected)
+        validate_config(json.loads(json.dumps(rule_config)))
+        actual, _, _, status = apply_record(before, after, rule_config, {})
         self.assertEqual(status, "updated")
         self.assertEqual(actual["Segmentation"]["eojeols"], after["Segmentation"]["eojeols"])
         self.assertEqual(actual["RecordingMetadata"]["orthographic"], "  new   word ")
@@ -65,11 +65,11 @@ class EasyRulesTests(unittest.TestCase):
         self.assertEqual(actual["RecordingMetadata"]["recorded_time_sec"], 2)
         # Explicit whole-list replacement also allows clearing the list.
         after["Segmentation"]["eojeols"] = []
-        actual, *_ = apply_record(before, after, profile, {})
+        actual, *_ = apply_record(before, after, rule_config, {})
         self.assertEqual(actual["Segmentation"]["eojeols"], [])
         after["Segmentation"]["eojeols"] = [{"eojeolID": 1, "text": "bad", "start": 5, "end": 4}]
-        with self.assertRaises(ReviewRequired): apply_record(before, after, profile, {})
-        no_check = make_profile(data, options, selected, check_times=False)
+        with self.assertRaises(ReviewRequired): apply_record(before, after, rule_config, {})
+        no_check = make_rule(data, options, selected, check_times=False)
         actual, *_ = apply_record(before, after, no_check, {})
         self.assertEqual(actual["Segmentation"]["eojeols"][0]["start"], 5)
 
@@ -85,11 +85,11 @@ class EasyRulesTests(unittest.TestCase):
         self.assertEqual(inputs.candidates[0]["source_duplicates"], 2)
         self.assertEqual(CounterStates(data), {"연결됨": 1, "KEY 중복": 3, "보완만 있음": 1})
         path = "/a~1b/~0label"
-        config = make_profile(data, options, [path])
+        config = make_rule(data, options, [path])
         actual, *_ = apply_record(left[0], right[0], config, {})
         self.assertEqual(actual["a/b"]["~label"], "new")
-        with self.assertRaises(DataError): make_profile(data, options, ["/id"])
-        with self.assertRaises(DataError): make_profile(data, options, [])
+        with self.assertRaises(DataError): make_rule(data, options, ["/id"])
+        with self.assertRaises(DataError): make_rule(data, options, [])
 
     def test_jsonl_typed_keys_and_missing_keys_are_not_guessed(self):
         (self.source/"rows.jsonl").write_text('{"id":1,"label":"old"}\n{"id":"1","label":"old"}\n{"label":"missing"}\n', encoding="utf-8")
@@ -125,16 +125,16 @@ class EasyRulesTests(unittest.TestCase):
         data, options = select_key(inputs, "/id", result_path="/importData_id")
         selected = [o["path"] for o in options if o["selected"]]
         self.assertEqual(selected, ["/instruction"])
-        profile = make_profile(data, options, selected)
-        self.assertEqual(profile["rules"][0]["from"], "/instruction_error_modify/data/0/value")
-        a, *_ = apply_record(originals[0], incoming[0], profile, {})
-        b, *_ = apply_record(originals[1], incoming[1], profile, {})
+        rule_config = make_rule(data, options, selected)
+        self.assertEqual(rule_config["rules"][0]["from"], "/instruction_error_modify/data/0/value")
+        a, *_ = apply_record(originals[0], incoming[0], rule_config, {})
+        b, *_ = apply_record(originals[1], incoming[1], rule_config, {})
         self.assertEqual(a, {**originals[0], "instruction": "new A"})
         self.assertEqual(b, originals[1])
         incoming[0]["instruction_error_modify"]["data"].append({"value": "do not silently discard"})
-        with self.assertRaises(ReviewRequired): apply_record(originals[0], incoming[0], profile, {})
+        with self.assertRaises(ReviewRequired): apply_record(originals[0], incoming[0], rule_config, {})
         missing = copy.deepcopy(incoming[1]); missing.pop("instruction_error_modify")
-        actual, *_ = apply_record(originals[1], missing, profile, {})
+        actual, *_ = apply_record(originals[1], missing, rule_config, {})
         self.assertEqual(actual, originals[1])
 
     def test_manual_connections_without_recommendations_and_empty_value_policy(self):
@@ -147,18 +147,18 @@ class EasyRulesTests(unittest.TestCase):
         self.assertEqual(key_stats(inputs, "/id", "/dataID")["matched"], 0)
         self.assertEqual(CounterStates(data), {"원본만 있음": 1, "보완만 있음": 1})
         item = connection_option(inputs, data, "/text", "/new_text", skip_empty=False)
-        profile = make_profile(data, [item], ["/text"])
-        actual, *_ = apply_record(before, after, profile, {})
+        rule_config = make_rule(data, [item], ["/text"])
+        actual, *_ = apply_record(before, after, rule_config, {})
         self.assertEqual(actual["text"], "")
         item["skip_empty"] = True
-        actual, *_ = apply_record(before, after, make_profile(data, [item], ["/text"]), {})
+        actual, *_ = apply_record(before, after, make_rule(data, [item], ["/text"]), {})
         self.assertEqual(actual["text"], "old")
         with self.assertRaisesRegex(DataError, "기준 필드"):
             connection_option(inputs, data, "/id", "/new_text")
         array = connection_option(inputs, data, "/items", "/values")
         child = connection_option(inputs, data, "/items/0/label", "/values/0/label")
         with self.assertRaisesRegex(DataError, "동시에"):
-            make_profile(data, [array, child], ["/items", "/items/0/label"])
+            make_rule(data, [array, child], ["/items", "/items/0/label"])
 
 
 def CounterStates(data):

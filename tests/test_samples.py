@@ -5,7 +5,7 @@ from pathlib import Path
 
 from label_porter.engine import run
 from label_porter.formats import DataError
-from label_porter.mapping import Scope, compile_profile, load_samples, preview_profile, sample_rows
+from label_porter.mapping import Scope, compile_rule, load_samples, preview_rule, sample_rows
 
 
 class SampleCollectionTests(unittest.TestCase):
@@ -27,7 +27,7 @@ class SampleCollectionTests(unittest.TestCase):
         scope = Scope(source.rows(), result.rows(), source.meta)
         scope.connect(key, result_key, "key")
         scope.connect("/label", "/new", "value")
-        config = compile_profile(scope, source, result, "", "", "여러 파일")
+        config = compile_rule(scope, source, result, "", "", "여러 파일")
         return scope, config
 
     def test_recursive_folder_preserves_each_file_identity(self):
@@ -41,7 +41,7 @@ class SampleCollectionTests(unittest.TestCase):
         self.assertEqual(source.file_count, 3)
         self.assertEqual([item["relative_path"] for item in scope.source_rows.metadata], ["a.json", "sub/b.json", "sub/c.json"])
         self.assertEqual(set(scope.source_fields["@file_name"].examples), {"a.json", "b.json", "c.json"})
-        report = preview_profile(config, scope.source_rows, scope.result_rows, source.meta)
+        report = preview_rule(config, scope.source_rows, scope.result_rows, source.meta)
         self.assertEqual(report["counts"], {"updated": 2, "no_result": 1})
         self.assertEqual(report["all_source_key_counts"], {"matched": 2, "no_result": 1})
         actual = run(self.originals, [incoming], self.base / "output", config)
@@ -55,9 +55,9 @@ class SampleCollectionTests(unittest.TestCase):
         incoming = self.write(self.base / "result.json", [{"file": "same.json", "path": "left/same.json", "new": "L"}, {"file": "same.json", "path": "right/same.json", "new": "R"}])
         source, result = load_samples([left, right]), load_samples(incoming)
         scope, config = self.build(source, result)
-        self.assertEqual(preview_profile(config, scope.source_rows, scope.result_rows, source.meta)["counts"], {"duplicate": 2})
+        self.assertEqual(preview_rule(config, scope.source_rows, scope.result_rows, source.meta)["counts"], {"duplicate": 2})
         scope, config = self.build(source, result, "@relative_path", "/path")
-        report = preview_profile(config, scope.source_rows, scope.result_rows, source.meta)
+        report = preview_rule(config, scope.source_rows, scope.result_rows, source.meta)
         self.assertEqual(report["counts"], {"updated": 2})
         self.assertEqual(source.root, self.originals)
 
@@ -68,7 +68,7 @@ class SampleCollectionTests(unittest.TestCase):
         source, result = load_samples(self.originals), load_samples(self.base / "exports")
         scope, config = self.build(source, result, "/id", "/ref")
         config["include_when"] = [{"left": {"meta": "result_row"}, "op": "eq", "value": 1}]
-        report = preview_profile(config, scope.source_rows, scope.result_rows, source.meta)
+        report = preview_rule(config, scope.source_rows, scope.result_rows, source.meta)
         self.assertEqual(source.file_count, 2)
         self.assertEqual(len(scope.source_rows), 4)
         self.assertEqual(report["counts"], {"updated": 2, "excluded": 2})
@@ -80,7 +80,7 @@ class SampleCollectionTests(unittest.TestCase):
         source, result = load_samples([a, a, b]), load_samples(incoming)
         scope, config = self.build(source, result, "/id", "/ref")
         self.assertEqual(source.file_count, 2)
-        self.assertEqual(preview_profile(config, scope.source_rows, scope.result_rows, source.meta)["all_source_key_counts"], {"duplicate": 2})
+        self.assertEqual(preview_rule(config, scope.source_rows, scope.result_rows, source.meta)["all_source_key_counts"], {"duplicate": 2})
 
     def test_invalid_file_and_invalid_record_container_report_file_name(self):
         self.write(self.originals / "good.json", {"records": [{"id": "a"}]})
@@ -110,7 +110,7 @@ class SampleCollectionTests(unittest.TestCase):
         incoming = self.write(self.base / "result.json", {"ref": str(target), "new": "new"})
         source, result = load_samples(original), load_samples(incoming)
         scope, config = self.build(source, result, "/id", "/ref")
-        report = preview_profile(config, scope.source_rows, scope.result_rows, source.meta)
+        report = preview_rule(config, scope.source_rows, scope.result_rows, source.meta)
         self.assertEqual(report["sampled"], 120)
         self.assertEqual(report["counts"]["updated"], 1)
         self.assertEqual(report["all_source_key_counts"], {"matched": 1, "no_result": 249})
@@ -122,7 +122,7 @@ class SampleCollectionTests(unittest.TestCase):
         second = self.write(self.base / "r2.json", {"ref": str(target), "new": "other"})
         source, result = load_samples(self.originals), load_samples([first, second])
         scope, config = self.build(source, result, "/id", "/ref")
-        report = preview_profile(config, scope.source_rows, scope.result_rows, source.meta)
+        report = preview_rule(config, scope.source_rows, scope.result_rows, source.meta)
         self.assertEqual(report["all_source_key_counts"], {"matched": 249, "duplicate": 1})
         self.assertEqual(report["duplicate_result_rows"], 2)
 
