@@ -34,7 +34,9 @@ class MarkdownTests(unittest.TestCase):
                 self.assertGreater(len(headings), 10)
                 self.assertIn("<h1", rendered)
                 self.assertNotIn("<script", rendered)
-                self.assertNotIn("<img", rendered)
+                images = re.findall(r'<img[^>]+src="([^"]+)"', rendered)
+                self.assertTrue(all(url.startswith('https://label-porter.invalid/diagrams/') for url in images))
+                if name == '아키텍처_및_규칙엔진.md': self.assertEqual(len(images), 3)
 
     def test_reader_search_toc_zoom_links_and_source_preserved(self):
         root = tk.Tk(); root.withdraw(); self.addCleanup(root.destroy)

@@ -78,7 +78,7 @@ def _inventory(source: Path):
 
 def run(source_directory: Path | str | list[Path | str] | tuple, result_files: list[Path | str], output_directory: Path | str,
         config: dict, preview=False, progress: Callable[[dict], None] | None = None,
-        cancel: threading.Event | None = None, split_output=True) -> RunResult:
+        cancel: threading.Event | None = None, split_output=True, *, record_sink=None) -> RunResult:
     config = copy.deepcopy(validate_config(config))
     layout = source_layout(source_directory, config["source"].get("glob", "**/*.json"))
     source = layout.root or next(iter(layout.files.values()), Path.cwd()).parent
@@ -101,15 +101,15 @@ def run(source_directory: Path | str | list[Path | str] | tuple, result_files: l
         raise DataError("작업 결과 파일이 원본 선택 범위에도 포함되었습니다. 원본 폴더/패턴을 분리하세요.")
     with output_session(output, preview, source, [*result_paths, *originals.values()]) as run_dir:
         return _execute_run(run_dir, source, result_paths, inventory, selected, config,
-                            preview, progress, cancel, split_output, originals, layout.directory)
+                            preview, progress, cancel, split_output, originals, layout.directory, record_sink)
 
 
 def _execute_run(run_dir, source, result_paths, inventory, selected, config,
-                 preview, progress, cancel, split_output, originals, directory_mode):
+                 preview, progress, cancel, split_output, originals, directory_mode, record_sink=None):
     data_dir = run_dir / "data"
     report = Reports(run_dir / "reports", split_output=split_output, preview=preview,
-                     result_spec=config["result"], result_files=result_paths)
-    summary = {"version": 5, "rule": config["name"], "preview": bool(preview), "status": "running",
+                     result_spec=config["result"], result_files=result_paths, record_sink=record_sink)
+    summary = {"prepared": record_sink is not None, "version": 5, "rule": config["name"], "preview": bool(preview), "status": "running",
                "started_at": _now(), "source_directory": str(source), "run_directory": str(run_dir),
                "split_output": bool(split_output), "partition_status": "pending" if split_output else "disabled",
                "source_files": len(inventory), "label_files": len(selected), "source_records": 0, "result_records": 0}
@@ -289,9 +289,14 @@ def _execute_run(run_dir, source, result_paths, inventory, selected, config,
                     continue
                 match = matches[0]
                 detail.update(result_file=match["file"], result_row=match["number"])
+                connection_rows, observer, connection_count = [], None, lambda: 0
+                if record_sink:
+                    from .pair_preview import connection_observer
+                    connection_rows, observer, connection_count = connection_observer(
+                        config, original, match["row"], _meta(relative, match["file"], match["number"]))
                 try:
                     advisories = []
-                    candidate, changes, notes, status = apply_record(original, match["row"], config, _meta(relative, match["file"], match["number"]), advisories=advisories)
+                    candidate, changes, notes, status = apply_record(original, match["row"], config, _meta(relative, match["file"], match["number"]), advisories=advisories, observer=observer)
                     if changes:
                         if pointer == "":
                             document.docs[doc_index] = candidate
@@ -304,6 +309,9 @@ def _execute_run(run_dir, source, result_paths, inventory, selected, config,
                     if not preview and not advisories:
                         evidence.pop("candidate_record")
                         evidence.pop("candidate_note")
+                    if record_sink:
+                        evidence["_preview_connections"] = (record_sink.stash_connections(connection_rows, connection_count())
+                            if hasattr(record_sink, "stash_connections") else (connection_rows, connection_count()))
                     pending.append((detail, "planned_update" if preview and status == "updated" else status, changes, notes, evidence))
                 except (ValueError, TypeError, KeyError, IndexError, OverflowError) as exc:
                     try:
@@ -312,6 +320,9 @@ def _execute_run(run_dir, source, result_paths, inventory, selected, config,
                         evidence = {"source_record": original, "platform_record": match["row"], "final_record": original,
                                     "diagnostic_error": str(diagnostic_error),
                                     "issues": [{"code": "validation_error", "message": str(exc), "source_path": pointer}]}
+                    if record_sink:
+                        evidence["_preview_connections"] = (record_sink.stash_connections(connection_rows, connection_count())
+                            if hasattr(record_sink, "stash_connections") else (connection_rows, connection_count()))
                     report.record(**detail, status="review_required", reason=str(exc), evidence=evidence)
             changed = any(changes for _, _, changes, _, _ in pending)
             if changed:

@@ -13,7 +13,8 @@ def self_test(output):
         import tkinter as tk
         from unittest.mock import patch
         from label_porter.engine import run
-        root = tk.Tk()
+        from label_porter.widgets import create_root
+        root = create_root()
         root.withdraw()
         with patch.object(App, "_load_settings"):
             app = App(root)
@@ -32,6 +33,13 @@ def self_test(output):
         assert app.capabilities_box.source == app.capabilities_text
         assert app.architecture_box.source == app.architecture_text
         assert app.tabs.tab(3, "text") == "아키텍처 · 규칙 엔진"
+        assert len(app.architecture_box.diagrams) == 3
+        assert not app.architecture_box.diagrams_loaded
+        app.architecture_box._load_diagrams(); root.update()
+        assert len(app.architecture_box.diagram_widgets) == 3
+        assert all(label._diagram_image.width() >= 80 for label in app.architecture_box.diagram_widgets.values())
+        app.architecture_box.diagram_scale.set('150%'); app.architecture_box._scale_diagrams()
+        app.architecture_box.diagram_scale.set('화면에 맞춤'); app.architecture_box._scale_diagrams()
         assert 'project_rule.json' in app.architecture_text and 'rule.json' in app.architecture_text
         assert "<table>" in app.ai_guide_box.html_source
         assert app.ai_guide_box.browser.document.getElementById("section-0").textContent
@@ -57,8 +65,12 @@ def self_test(output):
             (source / "one.json").write_text(original, encoding="utf-8")
             (base / "result.json").write_text(json.dumps({"source_id": "test", "corrected_label": "new"}), encoding="utf-8")
             app.source.set(str(source)); app.result_paths = [str(base / "result.json")]
-            app.output.set(str(base / "output")); app._render_results()
+            app.output.set(str(base / "session_saved")); app._render_results()
             app._wizard()
+            import time
+            deadline = time.monotonic() + 10
+            while app.running and time.monotonic() < deadline:
+                root.update(); time.sleep(.01)
             editor = app.mapping
             assert editor.rule_config == config
             assert [editor.pages.tab(tab, "text") for tab in editor.pages.tabs()] == ["필드 연결", "필드 연결 프리뷰", "규칙 JSON"]
@@ -86,6 +98,21 @@ def self_test(output):
             assert [editor.preview.views.tab(tab, "text") for tab in editor.preview.views.tabs()] == [
                 "전체 데이터 목록", "실제 값 연결", "JSON 한 쌍 · 처리 후"]
             app.primary_button.invoke()
+            assert app._session_ready() and app.primary_button['text'] == '전체 데이터 검증'
+            assert not (base/'session_saved').exists()
+            app.primary_button.invoke()
+            deadline = time.monotonic() + 15
+            while app.running and time.monotonic() < deadline:
+                root.update(); time.sleep(.01)
+            assert app.preview_fingerprint and app.last_summary['preview']
+            assert not (app.last_run/'data').exists()
+            assert app.primary_button['text'] == '복사본 저장'
+            app.primary_button.invoke()
+            deadline = time.monotonic() + 15
+            while app.running and time.monotonic() < deadline:
+                root.update(); time.sleep(.01)
+            assert app._saved(), app.status.get()
+            assert json.loads((app.last_run / 'data/one.json').read_text(encoding='utf-8')) == editor.preview.pair['output']
             from label_porter.mapping import load_samples, preview_rule, import_rule, compile_rule
             for _, rule_config in app.bundled_rules.values():
                 restored = import_rule(rule_config)
@@ -121,11 +148,12 @@ def self_test(output):
             assert check["all_source_key_counts"] == {"matched": 2}
             from label_porter.json_viewer import JsonViewer
             from label_porter.formats import Document
-            viewer = JsonViewer(root)
+            viewer = app.json_viewer = JsonViewer(root, on_close=app._json_viewer_closed)
             viewer.window.withdraw()
             viewer.display(Document([[{"items": [1, 2, 3]}]], "self-test"))
             assert "최상위 항목 1개" in viewer.status.get()
             viewer.window.destroy()
+            assert app.json_viewer is None and not viewer.values and viewer.events.empty()
             viewer = JsonViewer(root, paths=[many])
             viewer.window.withdraw()
             deadline = time.monotonic() + 10
@@ -134,7 +162,13 @@ def self_test(output):
             assert len(viewer.browser.paths) == 2 and viewer.values and not viewer.loading
             viewer.browser.query.set('b.json'); viewer.browser.filter()
             assert len(viewer.browser.filtered) == 1
+            import gc, weakref
+            viewer_ref = weakref.ref(viewer)
             viewer.window.destroy()
+            assert viewer.browser.on_select is None and not viewer.browser.paths
+            del viewer
+            gc.collect()
+            assert viewer_ref() is None
             chosen = run([many/'a.json'], [many_result], base/'selected_output', file_rule)
             assert chosen.summary['source_records'] == 1 and chosen.summary['status'] != 'failed'
             assert (chosen.directory/'data/a.json').is_file() and not (chosen.directory/'data/b.json').exists()
@@ -159,7 +193,7 @@ def self_test(output):
             old_text = next(row for row in rebuild_pair['rows'] if row.get('target_path') == '/items/0/text')
             assert old_text['source'] == '"old"' and old_text['comparison'] == 'id'
             assert rebuild_pair['output']['items'] == [{'id': 1, 'text': 'new'}]
-            # Exercise the bundled optional builder and its cached preview handoff.
+            # The builder reuses its in-memory preview and inputs.
             easy_result = base / "easy.json"
             easy_result.write_text(json.dumps([{"dataID": "external", "importData_id": "test",
                                                "label_error_modify": {"data": [{"value": "easy"}]}}]), encoding="utf-8")
@@ -180,15 +214,15 @@ def self_test(output):
             remembered = builder.preview.cache
             builder.next()
             deadline = time.monotonic() + 10
-            while app.mapping.preview.pair is None and time.monotonic() < deadline:
+            while (app.mapping is None or app.mapping.preview.pair is None) and time.monotonic() < deadline:
                 root.update(); time.sleep(.01)
-            assert app.mapping.preview.cache is remembered
+            assert app.mapping.preview.cache is remembered and app._session_ready()
             assert app._get_config()["source"]["key"] == "/id"
             assert app._get_config()["result"]["key"] == "/importData_id"
             assert app.mapping.preview.pair["output"]["label"] == "easy"
             app._close_mapping(); app._close_builder()
         root.destroy()
-        Path(output).write_text(json.dumps({"ok": True, "tk": True, "rules": 4, "engine": True, "original_preserved": True, "split_output": True, "date_sequence": True, "reusable_preview": True, "media_feature_removed": True, "ai_guide_bundled": True, "general_project_help": True, "inline_help": True, "shared_navigation": True, "four_step_workflow": True, "automatic_data_preview": True, "ai_rule_roundtrip": True, "multiple_sample_files": True, "per_file_identity": True, "ai_first_workflow": True, "readonly_field_review": True, "inline_rule_inspection": True, "explicit_next_step": True, "easy_rules": True}), encoding="utf-8")
+        Path(output).write_text(json.dumps({"ok": True, "preview_only_stage3": True, "full_validation_stage4": True, "mermaid_diagrams": 3, "mermaid_offline": True, "tk": True, "rules": 4, "engine": True, "original_preserved": True, "split_output": True, "date_sequence": True, "reusable_preview": True, "media_feature_removed": True, "ai_guide_bundled": True, "general_project_help": True, "inline_help": True, "shared_navigation": True, "four_step_workflow": True, "automatic_data_preview": True, "ai_rule_roundtrip": True, "multiple_sample_files": True, "per_file_identity": True, "ai_first_workflow": True, "readonly_field_review": True, "inline_rule_inspection": True, "explicit_next_step": True, "easy_rules": True}), encoding="utf-8")
         return 0
     except Exception:
         Path(output).write_text(json.dumps({"ok": False, "error": traceback.format_exc()}), encoding="utf-8")

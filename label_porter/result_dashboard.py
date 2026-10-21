@@ -59,7 +59,7 @@ def write_dashboard(directory, summary, catalog, examples):
     preview = summary["preview"]
     rule_name = summary.get("rule", summary.get("profile", ""))
     rule_file = "profile.json" if not (directory.parent / "rule.json").is_file() and (directory.parent / "profile.json").is_file() else "rule.json"
-    mode = "검증 미리보기 · 데이터 파일 미생성" if preview else "복사본 저장 결과"
+    mode = "전체 처리 완료 · 임시 보관 (최종 저장 전)" if summary.get("prepared") else "검증 미리보기 · 데이터 파일 미생성" if preview else "복사본 저장 결과"
     state = {"completed": "처리 완료", "completed_with_issues": "처리 완료 · 확인 필요",
              "failed": "실패 · 부분 결과", "cancelled": "중단 · 부분 결과"}.get(summary["status"], "진행 중")
     badge = "error" if summary["status"] in ("failed", "cancelled") else "warn" if summary["status"] == "completed_with_issues" else ""

@@ -4,6 +4,7 @@ from __future__ import annotations
 import copy
 import json
 import time
+import threading
 from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -13,6 +14,8 @@ from .diagnostics import observed
 from .formats import MISSING, DataError, canonical_key, get_pointer, read_document, records
 from .rules import apply_record, expression
 from .input_files import source_paths, source_layout
+from .json_display import json_prefix
+from .search_index import SearchIndex
 
 ERRORS = (ValueError, TypeError, KeyError, IndexError, OverflowError)
 ROW_LIMIT = 200
@@ -21,8 +24,8 @@ ROW_LIMIT = 200
 def display(value, limit=20000):
     if value is MISSING:
         return "필드 없음"
-    text = json.dumps(value, ensure_ascii=False, indent=2)
-    return text if len(text) <= limit else text[:limit] + "\n… (표시 한도 초과 · 값은 수정하지 않음)"
+    text, truncated = json_prefix(value, limit)
+    return text + "\n… (표시 한도 초과 · 값은 수정하지 않음)" if truncated else text
 
 
 def context(row, meta):
@@ -70,6 +73,8 @@ class PreviewData:
     fingerprint: tuple
     result_records: list = field(default_factory=list)
     catalog: list = field(default_factory=list)
+    search_index: SearchIndex | None = None
+    search_lock: object = field(default_factory=threading.Lock, repr=False)
 
 
 def load_preview(rule_config, source, results, root="", progress=None, cancel=None):
@@ -165,14 +170,11 @@ def build_catalog(data, checkpoint=lambda: None):
         source_location = original[2] if original else ""
         result_location = incoming[3] if incoming else ""
         key_text = str(json.loads(key)[1]) if key is not None else "KEY 해석 불가"
-        def searchable(value):
-            return json.dumps(value, ensure_ascii=False, separators=(",", ":")).casefold()
         catalog.append({
             "source_index": source_index, "incoming": incoming, "key": key_text, "state": state,
             "source_location": source_location, "result_location": result_location,
             "search": (key_text.casefold(), (source_location + " " + result_location).casefold(),
-                       searchable(original[0]) if original else "",
-                       searchable(incoming[1]) if incoming else "", state.casefold()),
+                       "", "", state.casefold()),
         })
     for i, key in enumerate(data.source_keys):
         checkpoint()
@@ -196,20 +198,38 @@ SEARCH_FIELDS = {"전체": None, "KEY": 0, "파일명 / 위치": 1, "원본 JSON
 
 
 def search_catalog(data, query="", scope="전체", state="전체 상태", checkpoint=lambda: None):
+    if hasattr(data, "prepared_search"):
+        return data.prepared_search(query, scope, state, checkpoint)
     terms = query.casefold().split()
     field_index = SEARCH_FIELDS[scope]
+    index = None
+    if terms and field_index in (None, 2, 3):
+        while not data.search_lock.acquire(timeout=.05): checkpoint()
+        try:
+            checkpoint()
+            if data.search_index is None:
+                data.search_index = SearchIndex(data, checkpoint)
+            index = data.search_index
+        finally:
+            data.search_lock.release()
+    encoded = [term.encode('utf-8', errors='surrogatepass') for term in terms]
     found = []
     for i, entry in enumerate(data.catalog):
         if i % 256 == 0: checkpoint()
         if state != "전체 상태" and entry["state"] != state:
             continue
         fields = entry["search"] if field_index is None else (entry["search"][field_index],)
-        if all(any(term in text for text in fields) for term in terms):
+        def matches(term, raw):
+            if any(term in text for text in fields): return True
+            return index is not None and any(index.contains(i, f, raw) for f in ((2, 3) if field_index is None else (field_index,)))
+        if all(matches(term, raw) for term, raw in zip(terms, encoded)):
             found.append(i)
     return found
 
 
 def catalog_preview(data, index):
+    if hasattr(data, "prepared_pair"):
+        return data.prepared_pair(index)
     entry = data.catalog[index]
     if entry["state"] == "연결됨":
         return match_preview(data, entry["source_index"])
@@ -255,27 +275,13 @@ def rebuilt_comparison(info, number, cache):
     return info['original'][old_index], info['prefix'] + '/' + str(old_index), mode, note
 
 
-def match_preview(data, index=0):
-    if not 0 <= index < len(data.originals):
-        raise DataError(f"원본 항목 번호는 1~{len(data.originals):,} 사이로 입력하세요.")
-    original, source_meta, source_location = data.originals[index]
-    key = data.source_keys[index]
-    if key is None:
-        raise DataError("선택한 원본에서 규칙의 KEY를 읽을 수 없습니다. 규칙 JSON의 source.key를 확인하세요.")
-    if data.source_counts[key] != 1:
-        raise DataError("선택한 원본 파일 또는 폴더 안에 같은 KEY가 여러 건입니다. 임의로 연결하지 않습니다.")
-    count = data.result_counts[key]
-    if count == 0:
-        raise DataError("같은 KEY의 보완 결과가 없습니다." +
-                        (f" 결과 {data.invalid_result_keys:,}건은 KEY를 읽을 수 없었습니다." if data.invalid_result_keys else ""))
-    if count != 1:
-        raise DataError(f"같은 KEY의 보완 결과가 {count:,}건입니다. 임의로 연결하지 않습니다.")
-    incoming, result_meta, result_location = data.results[key]
-    meta = {**source_meta, "result_file": result_meta["result_file"], "result_row": result_meta["result_row"]}
+def connection_observer(rule_config, original, incoming, meta):
+    source_key_meta = {**meta, 'result_file': '', 'result_row': ''}
+    result_key_meta = metadata(Path(meta['result_file']), result=True, number=meta['result_row']) if meta.get('result_file') else meta
     rows = [{
-        "kind": "key", "source_path": data.rule_config["source"]["key"], "result_expr": data.rule_config["result"]["key"],
-        "source": display(expression(data.rule_config["source"]["key"], context(original, source_meta))),
-        "result": display(expression(data.rule_config["result"]["key"], context(incoming, result_meta))),
+        "kind": "key", "source_path": rule_config["source"]["key"], "result_expr": rule_config["result"]["key"],
+        "source": display(expression(rule_config["source"]["key"], context(original, source_key_meta))),
+        "result": display(expression(rule_config["result"]["key"], context(incoming, result_key_meta))),
         "evaluated": "", "note": "규칙의 KEY가 같은 레코드 한 쌍입니다.",
     }]
     visited = 0
@@ -307,6 +313,27 @@ def match_preview(data, index=0):
             "evaluated": display(values["evaluated"]) if values.get("evaluated_present") else values.get("evaluated_error", ""),
             "note": note, "nested": bool(prefix), **extras,
         })
+    return rows, observe, lambda: visited + 1
+
+
+def match_preview(data, index=0):
+    if not 0 <= index < len(data.originals):
+        raise DataError(f"원본 항목 번호는 1~{len(data.originals):,} 사이로 입력하세요.")
+    original, source_meta, source_location = data.originals[index]
+    key = data.source_keys[index]
+    if key is None:
+        raise DataError("선택한 원본에서 규칙의 KEY를 읽을 수 없습니다. 규칙 JSON의 source.key를 확인하세요.")
+    if data.source_counts[key] != 1:
+        raise DataError("선택한 원본 파일 또는 폴더 안에 같은 KEY가 여러 건입니다. 임의로 연결하지 않습니다.")
+    count = data.result_counts[key]
+    if count == 0:
+        raise DataError("같은 KEY의 보완 결과가 없습니다." +
+                        (f" 결과 {data.invalid_result_keys:,}건은 KEY를 읽을 수 없었습니다." if data.invalid_result_keys else ""))
+    if count != 1:
+        raise DataError(f"같은 KEY의 보완 결과가 {count:,}건입니다. 임의로 연결하지 않습니다.")
+    incoming, result_meta, result_location = data.results[key]
+    meta = {**source_meta, "result_file": result_meta["result_file"], "result_row": result_meta["result_row"]}
+    rows, observe, connection_count = connection_observer(data.rule_config, original, incoming, meta)
     advisories = []
     try:
         candidate, changes, notes, status = apply_record(original, incoming, data.rule_config, meta,
@@ -320,6 +347,6 @@ def match_preview(data, index=0):
     return {"key": json.loads(key)[1], "source": original, "result": incoming, "candidate": candidate,
             "output": original if candidate is None else candidate,
             "source_location": source_location, "result_location": result_location,
-            "status": status, "message": message, "rows": rows, "total_connections": visited + 1,
+            "status": status, "message": message, "rows": rows, "total_connections": connection_count(),
             "source_total": len(data.originals), "result_total": data.result_total,
             "invalid_result_keys": data.invalid_result_keys}

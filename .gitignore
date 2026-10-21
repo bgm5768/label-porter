@@ -17,6 +17,7 @@ htmlcov/
 *.exe
 *.zip
 *.log
+node_modules/
 
 # Local datasets, exported results, and user-specific rules
 /data/

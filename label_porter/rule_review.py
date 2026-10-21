@@ -4,13 +4,15 @@ from __future__ import annotations
 import copy
 import json
 import tkinter as tk
-from tkinter import font, scrolledtext, ttk
+from tkinter import font, scrolledtext
+from . import widgets as ttk
 
 from .config import validate_config
 from .ui import BG, INK, MUTED
 from .pair_preview_ui import PairPreview
+from .ui_lifecycle import remove_traces, release_variables
 
-COLORS = {"key": "#2563eb", "field": "#087e6b", "items": "#8052ba", "guard": "#ad6c13", "rebuild_items": "#8052ba"}
+COLORS = {"key": "#0b57d0", "field": "#137333", "items": "#6f42a1", "guard": "#8a4b00", "rebuild_items": "#6f42a1"}
 LABELS = {"key": "같은 건 찾기", "field": "수정값 반영", "items": "반복 목록", "guard": "기존값·동일성 검사", "rebuild_items": "목록 전체 재구성"}
 SCOPES = {"source": "현재 원본", "original": "보완 전 원본", "result": "플랫폼 결과",
           "root_source": "전체 원본 레코드", "root_original": "전체 보완 전 레코드", "root_result": "전체 결과 레코드"}
@@ -98,7 +100,7 @@ def rule_connections(rule_config):
 
 class RuleReview:
     """Paired rows show only configured connections, with full JSON available on click."""
-    def __init__(self, parent, rule_config, on_continue, on_close, *, source_hint="", result_hints=(), configured=False, external_navigation=False, preloaded=None, rule_only=False):
+    def __init__(self, parent, rule_config, on_continue, on_close, *, source_hint="", result_hints=(), configured=False, external_navigation=False, preloaded=None, rule_only=False, on_state=None):
         self.rule_config = copy.deepcopy(validate_config(rule_config))
         self.rows = rule_connections(self.rule_config)
         self.on_continue, self.on_close = on_continue, on_close
@@ -106,7 +108,7 @@ class RuleReview:
         self.external_navigation = external_navigation
         self.rule_only = rule_only
         self.selected = None
-        self.window = ttk.Frame(parent)
+        self.window = ttk.Frame(parent) if rule_only else ttk.Card(parent, padding=12)
         self.window.pack(fill="both", expand=True)
         self.query = tk.StringVar()
         self.filter_kind = tk.StringVar(value="전체 연결")
@@ -116,7 +118,7 @@ class RuleReview:
         if not external_navigation: footer.pack(side="bottom", fill="x")
         note = ttk.Label(footer, textvariable=self.status, wraplength=780, foreground=MUTED)
         note.pack(fill="x", pady=(0, 8))
-        footer.bind("<Configure>", lambda e: note.configure(wraplength=max(280, e.width)))
+        footer.bind("<Configure>", lambda e: note.winfo_exists() and note.configure(wraplength=max(280, e.width)))
         actions = ttk.Frame(footer); actions.pack(fill="x")
         ttk.Button(actions, text="입력·저장 위치로" if configured else "개요로 돌아가기", command=self._close).pack(side="left")
         self.apply_button = ttk.Button(actions, text="확인 완료 · 전체 검증 →" if configured else "연결 확인 완료 · 입력 선택 →", style="Primary.TButton", command=self._apply)
@@ -144,7 +146,7 @@ class RuleReview:
         if not rule_only: self.detail.pack(side="bottom", fill="x", pady=(8, 0))
         self._text(self.detail, "연결 행을 선택하면 조건·변환·검증을 포함한 전체 설정을 확인할 수 있습니다.")
         area = ttk.Frame(visual); area.pack(fill="both", expand=True)
-        self.canvas = tk.Canvas(area, background=BG, highlightthickness=0)
+        self.canvas = tk.Canvas(area, background=BG if rule_only else ttk.SURFACE, highlightthickness=0)
         scroll = ttk.Scrollbar(area, command=self.canvas.yview); scroll.pack(side="right", fill="y")
         self.canvas.configure(yscrollcommand=scroll.set); self.canvas.pack(fill="both", expand=True)
         self.text_font = font.Font(self.window, family="맑은 고딕", size=10)
@@ -152,13 +154,18 @@ class RuleReview:
         self.canvas.bind("<Configure>", self._draw)
         self.canvas.bind("<Button-1>", self._select)
         self.canvas.bind("<MouseWheel>", lambda e: self.canvas.yview_scroll(-1 if e.delta > 0 else 1, "units"))
-        self.query.trace_add("write", self._filter)
-        self.filter_kind.trace_add("write", self._filter)
+        self.traces = [(variable, variable.trace_add("write", self._filter))
+                       for variable in (self.query, self.filter_kind)]
         self.preview = None
         if not rule_only:
-            self.preview = PairPreview(preview, self.rule_config, source_hint, result_hints, configured=configured, preloaded=preloaded)
+            self.preview = PairPreview(preview, self.rule_config, source_hint, result_hints, configured=configured,
+                                       preloaded=preloaded, on_state=on_state, show_actions=not configured)
             self.preview.pack(fill="both", expand=True)
         self.raw_box = self._box(raw); self._text(self.raw_box, json_text(self.rule_config))
+        if not rule_only:
+            from .ui import card_content
+            card_content(self.window)
+        self.window.bind("<Destroy>", self._destroyed, add="+")
         self._draw()
 
     @staticmethod
@@ -203,8 +210,8 @@ class RuleReview:
             right_text = canvas.create_text(right+12, start+12, text=row["result"], anchor="nw", width=cell-24, font=self.text_font, fill=INK, tags=tag)
             bottom = max(canvas.bbox(left_text)[3], canvas.bbox(right_text)[3])+12
             for x in (padding, right):
-                rect = canvas.create_rectangle(x, start, x+cell, bottom, fill="#eef5ff" if index == self.selected else "white",
-                                               outline=color if index == self.selected else "#dce3ee", width=2 if index == self.selected else 1, tags=tag)
+                rect = canvas.create_rectangle(x, start, x+cell, bottom, fill=ttk.SELECTED if index == self.selected else "white",
+                                               outline=color if index == self.selected else ttk.BORDER, width=2 if index == self.selected else 1, tags=tag)
                 canvas.tag_lower(rect, left_text)
             center = (start+bottom)/2
             canvas.create_line(padding+cell+7, center, right-7, center, fill=color, width=2,
@@ -232,13 +239,27 @@ class RuleReview:
                 break
 
     def _apply(self):
+        callback = self.on_continue
         if not self.external_navigation:
             self._close(notify=False)
-        self.on_continue()
+        if callback: callback()
+
+    def _dispose(self):
+        if self.closed: return
+        self.closed = True
+        remove_traces(self.traces)
+        if self.preview: self.preview.close()
+        self.rows.clear()
+        self.on_continue = self.on_close = None
+        self.text_font = self.bold_font = None
+        release_variables(self)
+
+    def _destroyed(self, event):
+        if event.widget is self.window: self._dispose()
 
     def _close(self, notify=True):
         if self.closed: return
-        self.closed = True
-        if self.preview: self.preview.close()
+        callback = self.on_close
+        self._dispose()
         self.window.destroy()
-        if notify: self.on_close()
+        if notify and callback: callback()

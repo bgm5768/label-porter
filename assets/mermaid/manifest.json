@@ -1,0 +1,29 @@
+{
+  "renderer": "@mermaid-js/mermaid-cli 12.0.0",
+  "diagrams": {
+    "bcd3a61fed8ee16a97de19d29e3e0a713566058d4f5f6fb3152e3422735a7b63": {
+      "document": "아키텍처_및_규칙엔진.md",
+      "title": "라벨 포터 전체 아키텍처",
+      "width": 3200,
+      "height": 1162,
+      "png_sha256": "32616dcd0700e50b00307219839f83688e0ac551db01565619249aebfb1314c6",
+      "svg_sha256": "85245ad6e13aa2caaa744c844424b33b0cdbd6e15936c6db656ad37de182bd16"
+    },
+    "53658f304487c073d7fa356dfd9d340b229bac783d52bf7f4956f718bc5f4c57": {
+      "document": "아키텍처_및_규칙엔진.md",
+      "title": "아키텍처 다이어그램",
+      "width": 3018,
+      "height": 3200,
+      "png_sha256": "0d546df97a3c3d7b7f04cb4663517beeb1378f23d523d5ec060f46d8a65cf2a8",
+      "svg_sha256": "2140f59c6465d1cda58a867d42a9fa4dbd1904dedb783306e25cf1cdba0a507c"
+    },
+    "58b1282dd6b3ef2a4ee080321b12ebd8808a99f020bdeb11505b31769b8ab062": {
+      "document": "아키텍처_및_규칙엔진.md",
+      "title": "아키텍처 다이어그램",
+      "width": 1624,
+      "height": 3200,
+      "png_sha256": "73389ca51b1b753a6471368d3ebcf29d488d3f649212060ca17de5f864180f48",
+      "svg_sha256": "c397cd6de6657fc59370f298370d9a66277cb7beee965099024f134669c98534"
+    }
+  }
+}

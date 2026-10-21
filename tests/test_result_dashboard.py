@@ -81,8 +81,9 @@ class DashboardTests(unittest.TestCase):
                 records = json.loads(chunk.removeprefix("window.porterDetail = ").removesuffix(";"))
                 self.assertIn(query["id"][0], records)
                 if row is changed:
-                    self.assertIn("변경 필드 1개", records[query["id"][0]])
-                    self.assertIn("new", records[query["id"][0]])
+                    detail = json.loads(records[query["id"][0]])
+                    self.assertEqual(len(detail['changes']), 1)
+                    self.assertEqual(detail['final_record']['label'], 'new')
         details = [json.loads(line) for line in (directory / "record_details.jsonl").read_text(encoding="utf-8").splitlines()]
         completed = next(row for row in details if row["status"] == "updated")
         self.assertEqual(completed["source_record"]["label"], "old")

@@ -10,6 +10,7 @@ from .config import validate_config
 from .formats import MISSING, DataError, canonical_key, equivalent, escape_token, get_pointer, read_document, records
 from .pair_preview import PreviewData, _file_stamp, build_catalog, metadata, source_paths
 from .mapping import collect_fields, _length_checks
+from .input_files import folder_files
 
 
 NAMES = {
@@ -161,6 +162,7 @@ def analyze_inputs(source, result_files, progress=lambda message: None, cancel=l
     def checkpoint():
         if cancel():
             raise DataError("데이터 분석을 중단했습니다.")
+    results = [file for p in results for file in (folder_files(p, checkpoint=checkpoint) if p.is_dir() else [p])]
     if not source.is_dir() or not results:
         raise DataError("원본 폴더와 보완 데이터 파일을 선택하세요.")
     if len(set(results)) != len(results):

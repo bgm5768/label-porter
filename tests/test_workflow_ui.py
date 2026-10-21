@@ -1,5 +1,6 @@
 import json
 import tempfile
+import threading
 import time
 import tkinter as tk
 import unittest
@@ -32,7 +33,8 @@ class WorkflowUiTests(unittest.TestCase):
             if not board.closed:
                 board._close()
         for job in self.root.tk.call("after", "info"):
-            self.root.after_cancel(job)
+            # Cancel scheduling; each widget deletes its own registered command.
+            self.root.tk.call('after', 'cancel', job)
         self.root.destroy()
         self.temp.cleanup()
 
@@ -60,13 +62,11 @@ class WorkflowUiTests(unittest.TestCase):
             app.output.set(str(self.base / "output")); app._render_results()
             self.confirm_connections(app)
             self.assertEqual(app.steps.index(app.steps.select()), 3)
-            self.assertIn("전체 데이터 검증", app.primary_button["text"])
-            self.assertIsNone(app.preview_fingerprint)
+            self.assertEqual(app.primary_button["text"], "복사본 저장")
+            self.assertTrue(app.preview_fingerprint)
             before = self.sf.read_bytes()
-            app._start(True)
-            self.until(lambda: not app.running)
-            self.assertEqual(str(app.run_button["state"]), "normal", app.status.get())
             self.assertFalse((app.last_run / "data").exists())
+            self.assertTrue((self.base / "output" / "미리보기").exists())
             app._start(False)
             self.until(lambda: not app.running)
             self.assertEqual(self.sf.read_bytes(), before)
@@ -110,7 +110,6 @@ class WorkflowUiTests(unittest.TestCase):
             app.output.set(str(self.base/'out'))
             self.confirm_connections(app)
             self.assertEqual(app.mapping.preview.source_files, (str(self.sf),))
-            app._start(True); self.until(lambda: not app.running)
             app._start(False); self.until(lambda: not app.running)
             self.assertEqual(json.loads((app.last_run/'data/one.json').read_text(encoding='utf-8'))['label'], 'new')
 
@@ -132,6 +131,7 @@ class WorkflowUiTests(unittest.TestCase):
 
     def confirm_connections(self, app):
         app._wizard()
+        self.until(lambda: not app.running)
         board = app.mapping; self.boards.append(board)
         self.assertIsNotNone(board, app.status.get())
         self.until(lambda: board.preview.pair is not None or "실패" in board.preview.status.get())
@@ -139,6 +139,104 @@ class WorkflowUiTests(unittest.TestCase):
         board.apply_button.invoke()
         self.root.update()
         self.assertEqual(app.current_step, 3)
+        app._start(True)
+        self.until(lambda: not app.running)
+
+    def test_stage3_never_runs_full_engine_or_creates_temporary_results(self):
+        with patch.object(App, '_load_settings'), patch.object(App, '_save_settings'):
+            app = App(self.root); app._set_config(self.config()); self.configure_inputs(app)
+            with patch('label_porter.engine.run', side_effect=AssertionError('full engine in stage 3')), \
+                 patch('tempfile.TemporaryDirectory', side_effect=AssertionError('staged result directory')):
+                app._wizard(); self.until(app._session_ready)
+                self.boards.append(app.mapping)
+                self.assertEqual(app.mapping.preview.pair['output']['label'], 'new')
+                app.primary_button.invoke()
+                self.assertEqual(app.current_step, 3)
+            self.assertIsNone(app.last_summary)
+            self.assertIsNone(app.preview_fingerprint)
+            self.assertFalse((self.base/'out').exists())
+            self.assertEqual(app.primary_button['text'], '전체 데이터 검증')
+            # Stage 4 reads current inputs rather than publishing stage 3's example.
+            self.rf.write_text('{"ref":"a","new":"latest"}', encoding='utf-8')
+            app.primary_button.invoke(); self.until(lambda: not app.running)
+            self.assertTrue(app.preview_fingerprint)
+            self.assertTrue((app.last_run/'reports/report.html').is_file())
+            self.assertFalse((app.last_run/'data').exists())
+            app.primary_button.invoke(); self.until(lambda: not app.running)
+            actual = json.loads((app.last_run/'data/one.json').read_text(encoding='utf-8'))
+            self.assertEqual(actual['label'], 'latest')
+            self.assertEqual(json.loads(self.sf.read_text(encoding='utf-8'))['label'], 'old')
+
+    def test_own_reports_inside_result_folder_do_not_invalidate_validation(self):
+        with patch.object(App, '_load_settings'), patch.object(App, '_save_settings'):
+            app = App(self.root); app._set_config(self.config()); self.configure_inputs(app)
+            folder = self.base/'incoming'; folder.mkdir()
+            self.rf.replace(folder/'result.json')
+            app.result_folder = str(folder); app.result_paths = []
+            app.output.set(str(folder/'output')); app._render_results()
+            self.confirm_connections(app)
+            self.assertTrue(app.preview_fingerprint)
+            app._start(False); self.until(lambda: not app.running)
+            self.assertTrue(app._saved(), app.status.get())
+            self.assertEqual(app.last_summary['result_records'], 1)
+
+    def test_processing_blocks_all_next_routes_and_cancel_then_retry(self):
+        from label_porter.rules import apply_record
+        entered, release = threading.Event(), threading.Event()
+        def slow(*args, **kwargs):
+            entered.set()
+            release.wait(5)
+            return apply_record(*args, **kwargs)
+        with patch.object(App, '_load_settings'), patch.object(App, '_save_settings'):
+            app = App(self.root); app._set_config(self.config()); self.configure_inputs(app)
+            with patch('label_porter.pair_preview.apply_record', side_effect=slow):
+                app._wizard()
+                try:
+                    self.until(entered.is_set)
+                    self.boards.append(app.mapping)
+                    self.assertTrue(app.preparing)
+                    self.assertEqual(app.primary_button['state'], 'disabled')
+                    self.assertEqual(app.nav_buttons[3]['state'], 'disabled')
+                    beats = []
+                    self.root.after(0, lambda: beats.append(True)); self.root.update()
+                    self.assertEqual(beats, [True])
+                    app._primary(); app._navigate(3); app._finish_mapping()
+                    self.assertEqual(app.current_step, 2)
+                    app._cancel()
+                finally: release.set()
+                self.until(lambda: not app.running)
+            self.assertFalse(app._session_ready())
+            self.assertEqual(app.nav_buttons[3]['state'], 'disabled')
+            self.assertFalse((self.base/'out').exists())
+            app.primary_button.invoke()
+            self.until(app._session_ready)
+            self.assertEqual(app.nav_buttons[3]['state'], 'normal')
+            app.primary_button.invoke()
+            self.assertEqual(app.current_step, 3)
+            self.assertEqual(app.metric_values['changed'].get(), '—')
+            self.assertEqual(app.primary_button['text'], '전체 데이터 검증')
+
+    def test_preview_search_paging_and_return_do_not_evaluate_again(self):
+        originals = [{'id': str(i), 'label': 'old'} for i in range(65)]
+        results = [{'ref': str(i), 'new': f'changed-{i}'} for i in range(65)]
+        self.sf.write_text(json.dumps(originals), encoding='utf-8')
+        self.rf.write_text(json.dumps(results), encoding='utf-8')
+        with patch.object(App, '_load_settings'), patch.object(App, '_save_settings'):
+            app = App(self.root); app._set_config(self.config()); self.configure_inputs(app)
+            app._wizard(); self.until(app._session_ready)
+            board = app.mapping; self.boards.append(board)
+            self.until(lambda: board.preview.pair is not None)
+            preview = board.preview
+            self.assertEqual(len(preview.table.get_children()), 25)
+            with patch('label_porter.engine.run', side_effect=AssertionError('full processing in preview')):
+                preview._go_page(3)
+                self.assertEqual(len(preview.table.get_children()), 15)
+                preview.scope.set('보완 JSON'); preview.query.set('changed-64')
+                self.until(lambda: len(preview.filtered) == 1 and preview.pair and preview.pair['key'] == '64')
+                self.assertEqual(preview.pair['output']['label'], 'changed-64')
+                app._finish_mapping(); app._back()
+                self.assertIs(app.mapping.preview, preview)
+                self.assertEqual(preview.query.get(), 'changed-64')
 
     def test_import_shows_rule_then_explicit_next_automatically_loads_pair(self):
         with patch.object(App, "_load_settings"), patch.object(App, "_save_settings") as save:
@@ -157,7 +255,7 @@ class WorkflowUiTests(unittest.TestCase):
             self.configure_inputs(app)
             # The first source file is unmatched: auto preview must find a real pair.
             (self.source/'0.json').write_text('{"id":"missing"}', encoding='utf-8')
-            app.primary_button.invoke(); self.root.update()
+            app.primary_button.invoke(); self.until(lambda: not app.running)
             board = app.mapping; self.boards.append(board)
             self.until(lambda: board.preview.pair is not None)
             self.assertTrue(board.preview.configured)
@@ -170,10 +268,11 @@ class WorkflowUiTests(unittest.TestCase):
             self.assertEqual(app.current_step, 3)
             self.assertTrue(app.connection_confirmed)
             self.assertIsNone(app.preview_fingerprint)
-            with patch('label_porter.workflow.run') as run:
-                app._start(False)
-                run.assert_not_called()
             self.assertFalse((self.base/'out').exists())
+            app._start(True); self.until(lambda: not app.running)
+            self.assertTrue(app.preview_fingerprint)
+            app._start(False); self.until(lambda: not app.running)
+            self.assertTrue((app.last_run/'data').exists())
 
     def test_connections_require_inputs_and_changed_inputs_require_confirmation(self):
         with patch.object(App, "_load_settings"), patch.object(App, "_save_settings"):
@@ -183,16 +282,18 @@ class WorkflowUiTests(unittest.TestCase):
             self.assertEqual(app.current_step, 1)
             self.configure_inputs(app); self.confirm_connections(app)
             app.output.set(str(self.base/'other-output'))
-            self.assertFalse(app.connection_confirmed)
+            self.assertTrue(app.connection_confirmed)
+            session = app.mapping.preview.cache
             app._navigate(3)
-            self.assertEqual(app.current_step, 2)
-            self.boards.append(app.mapping)
+            self.assertEqual(app.current_step, 3)
+            self.assertIs(app.mapping.preview.cache, session)
 
     def test_inline_help_returns_to_exact_view_without_new_window(self):
         with patch.object(App, "_load_settings"), patch.object(App, "_save_settings"):
             app = App(self.root)
             self.assertFalse(hasattr(app, 'help_window'))
-            self.assertEqual([w['text'] for w in app.toolbar.winfo_children()], ['JSON 뷰어'])
+            self.assertIs(app.viewer_button.master, app.help_button.master)
+            self.assertFalse(hasattr(app, 'toolbar'))
             self.assertFalse(any(isinstance(w, tk.Toplevel) for w in self.root.winfo_children()))
             app.help_button.invoke(); self.root.update()
             self.assertEqual(app.route, 'help')
@@ -201,6 +302,7 @@ class WorkflowUiTests(unittest.TestCase):
             self.assertEqual(app.current_step, 0)
             self.assertEqual(str(app.back_button['state']), 'disabled')
             app._set_config(self.config()); self.configure_inputs(app); app._wizard()
+            self.until(lambda: not app.running)
             board = app.mapping; self.boards.append(board)
             self.until(lambda: board.preview.pair is not None)
             board.pages.select(1); board.preview.views.select(1)
@@ -232,12 +334,11 @@ class WorkflowUiTests(unittest.TestCase):
             self.assertEqual((app.page_title.get(), app.page_caption.get(), app.status.get()), before)
             app.primary_button.invoke()
             self.assertEqual(app.current_step, 3)
-            app.primary_button.invoke(); self.until(lambda: not app.running)
             fingerprint = app.preview_fingerprint
             app.help_button.invoke(); app.back_button.invoke()
             self.assertEqual(app.current_step, 3)
             self.assertEqual(app.preview_fingerprint, fingerprint)
-            self.assertEqual(app.primary_button['text'], '복사본 저장')
+            self.assertEqual(app.primary_button['text'], '전체 데이터 검증')
             app.help_button.invoke(); app._navigate(1)
             self.assertEqual(app.route, 'workflow')
             self.assertEqual(app.current_step, 1)
@@ -247,7 +348,7 @@ class WorkflowUiTests(unittest.TestCase):
         with patch.object(App, "_load_settings"), patch.object(App, "_save_settings"):
             app = App(self.root); app._set_config(self.config()); self.configure_inputs(app)
             self.rf.write_text('{"ref":"other","new":"value"}', encoding="utf-8")
-            app._wizard(); board = app.mapping; self.boards.append(board)
+            app._wizard(); self.until(lambda: not app.running); board = app.mapping; self.boards.append(board)
             self.until(lambda: board.preview.pair is not None)
             self.assertEqual(board.preview.pair["status"], "unpaired")
             self.assertEqual(len(board.preview.cache.catalog), 2)
@@ -261,7 +362,7 @@ class WorkflowUiTests(unittest.TestCase):
     def test_preview_session_survives_steps_and_only_data_or_rule_changes_clear_it(self):
         with patch.object(App, "_load_settings"), patch.object(App, "_save_settings"):
             app = App(self.root); app._set_config(self.config()); self.configure_inputs(app)
-            app._wizard(); board = app.mapping; self.boards.append(board)
+            app._wizard(); self.until(lambda: not app.running); board = app.mapping; self.boards.append(board)
             self.until(lambda: board.preview.pair is not None)
             board.pages.select(1); board.preview.views.select(1)
             board.preview.query.set("a")
@@ -284,7 +385,7 @@ class WorkflowUiTests(unittest.TestCase):
             other = self.base/"other.json"; other.write_bytes(self.rf.read_bytes())
             app.result_paths = [str(other)]; app._invalidate_preview()
             self.assertTrue(board.closed)
-            app._wizard(); replacement = app.mapping; self.boards.append(replacement)
+            app._wizard(); self.until(lambda: not app.running); replacement = app.mapping; self.boards.append(replacement)
             self.until(lambda: replacement.preview.pair is not None)
             self.assertIsNot(replacement.preview.cache, cache)
             app._navigate(0); app._set_config({**self.config(), "name": "new"})
@@ -309,14 +410,16 @@ class WorkflowUiTests(unittest.TestCase):
             app = App(self.root); app._set_config(self.config()); app._advance_inputs()
             app.source.set(str(self.source)); app.result_paths = [str(self.rf)]
             app.output.set(str(self.base/'out')); app._render_results(); self.confirm_connections(app)
-            app.primary_button.invoke(); self.until(lambda: not app.running)
             self.assertEqual(app.metric_values['changed'].get(), '1')
             self.assertEqual(app.primary_button['text'], '복사본 저장')
             self.sf.write_text(json.dumps({'id':'a', 'label':'changed externally'}), encoding='utf-8')
             app.primary_button.invoke()
+            self.until(lambda: not app.running)
             self.assertFalse(app.running)
             self.assertIsNone(app.preview_fingerprint)
-            self.assertIn('전체 데이터 검증', app.primary_button['text'])
+            self.assertEqual('전체 데이터 검증', app.primary_button['text'])
+            self.assertEqual(app.steps.index(app.steps.select()), 3)
+            self.assertEqual(app.nav_buttons[3]['state'], 'normal')
             self.assertFalse(any((self.base/'out').glob('????-??-??')))
             app._show_summary({'source_records':4,'result_records':3,'preview':True,'status':'completed_with_issues',
                               'source_status_counts':{'planned_update':1,'unchanged':1,'no_result':1,'review_required':1},
@@ -336,7 +439,7 @@ class WorkflowUiTests(unittest.TestCase):
                 self.assertGreater(button.winfo_width(), 80)
                 self.assertLessEqual(button.winfo_rooty()+button.winfo_height(), self.root.winfo_rooty()+self.root.winfo_height())
             self.configure_inputs(app)
-            app._wizard(); board = app.mapping; self.boards.append(board)
+            app._wizard(); self.until(lambda: not app.running); board = app.mapping; self.boards.append(board)
             self.root.update()
             self.assertGreater(board.canvas.winfo_height(), 70)
             self.assertFalse(board.apply_button.winfo_ismapped())
@@ -364,9 +467,9 @@ class WorkflowUiTests(unittest.TestCase):
             app._set_config(self.config()); self.configure_inputs(app)
             rectangles = []
             for index in (0, 1, 2):
-                app._navigate(index); self.root.update()
+                app._navigate(index); self.until(lambda: not app.running); self.root.update()
                 rectangles.append(tuple((b.winfo_x(), b.winfo_rooty(), b.winfo_width(), b.winfo_height()) for b in (app.back_button, app.primary_button)))
-                self.assertEqual(app.primary_button['text'], '다음 단계 →')
+                self.assertEqual(app.primary_button['text'], '전체 검증 단계로 →' if index == 2 else '다음 단계 →')
                 self.assertEqual(app.back_button['text'], '← 이전 단계')
             self.assertEqual(rectangles[0], rectangles[1])
             self.assertEqual(rectangles[1], rectangles[2])

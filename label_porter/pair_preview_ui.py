@@ -6,16 +6,23 @@ import threading
 import tkinter as tk
 from collections import OrderedDict
 from pathlib import Path
-from tkinter import filedialog, scrolledtext, ttk
+from tkinter import filedialog, scrolledtext
+from . import widgets as ttk
 
 from .pair_preview import (SEARCH_FIELDS, catalog_preview, display, fingerprint, load_preview,
                            match_preview, search_catalog)
 from .ui import BG, INK, MUTED
+from .ui_lifecycle import UiEventQueue, remove_traces, release_variables
 
 
 class PairPreview(ttk.Frame):
-    def __init__(self, parent, rule_config, source_hint="", result_hints=(), *, configured=False, preloaded=None):
+    def __init__(self, parent, rule_config, source_hint="", result_hints=(), *, configured=False, preloaded=None, on_state=None, show_actions=True):
         super().__init__(parent)
+        self.on_state = on_state
+        self.show_actions = show_actions
+        self.initial_preview_done = False
+        self.selection_pending = False
+        self.initial_search_pending = False
         self.configured, self.example_index = configured, 0
         self.auto_job = None
         self.rule_config, self.closed, self.busy = rule_config, False, False
@@ -28,6 +35,7 @@ class PairPreview(ttk.Frame):
         self.search_job = None
         self.pair_cache = OrderedDict()
         self.selection_lock = threading.Lock()
+        self.selection_cancel = threading.Event()
         self.query = tk.StringVar()
         self.scope = tk.StringVar(value="전체")
         self.connection_state = tk.StringVar(value="전체 상태")
@@ -37,10 +45,11 @@ class PairPreview(ttk.Frame):
         self.data_summary = tk.StringVar(value="세션에 보관 · 단계 이동 시 유지")
         self.generation = 0
         self.cancel_event = threading.Event()
-        self.queue = queue.Queue()
+        self.queue = UiEventQueue()
         self.source_files = tuple(source_hint) if isinstance(source_hint, (list, tuple)) else ()
         hint = Path(source_hint) if source_hint and not self.source_files else None
         self.source = tk.StringVar(value=f"선택한 원본 {len(self.source_files):,}개 파일" if self.source_files else str(hint) if hint and (configured or hint.is_file()) else "")
+        if not show_actions and self.source_files: self.source.set(" ; ".join(self.source_files))
         self.root_path = tk.StringVar(value=str(hint if hint.is_dir() else hint.parent) if hint else "")
         self.results = list(result_hints)
         self.result_label = tk.StringVar(value=self._result_label())
@@ -48,11 +57,17 @@ class PairPreview(ttk.Frame):
         self.status = tk.StringVar(value="원본 JSON과 보완 결과를 선택하면 규칙의 KEY가 같은 한 쌍을 보여줍니다.")
         self.controls = []
         self._build()
-        for variable in (self.query, self.scope, self.connection_state):
-            variable.trace_add("write", lambda *_: self._schedule_search())
-        self.source.trace_add("write", lambda *_: self._invalidate())
-        self.root_path.trace_add("write", lambda *_: self._invalidate())
-        self.number.trace_add("write", lambda *_: self._invalidate(cache=False))
+        self.traces = []
+        for variable, callback in (
+            (self.query, lambda *_: self._schedule_search()),
+            (self.scope, lambda *_: self._schedule_search()),
+            (self.connection_state, lambda *_: self._schedule_search()),
+            (self.source, lambda *_: self._invalidate()),
+            (self.root_path, lambda *_: self._invalidate()),
+            (self.number, lambda *_: self._invalidate(cache=False)),
+        ):
+            self.traces.append((variable, variable.trace_add("write", callback)))
+        self.bind("<Destroy>", self._destroyed, add="+")
         self.poll_job = self.after(80, self._poll)
         if preloaded is not None:
             self.queue.put((self.generation, "loaded", preloaded))
@@ -71,10 +86,10 @@ class PairPreview(ttk.Frame):
 
     def _build(self):
         inputs = self.inputs_panel = ttk.Frame(self)
-        if not self.configured: inputs.pack(fill="x")
+        if not self.configured or not self.show_actions: inputs.pack(fill="x")
         inputs.columnconfigure(1, weight=1)
         for row, label, variable, command in (
-            (0, "원본 폴더" if self.configured else "원본 JSON", self.source, self._choose_source),
+            (0, "원본 라벨 데이터" if self.configured else "원본 JSON", self.source, self._choose_source),
             (1, "플랫폼 / 보완 결과", self.result_label, self._choose_results),
         ):
             ttk.Label(inputs, text=label).grid(row=row, column=0, sticky="w", padx=(0, 8), pady=3)
@@ -90,25 +105,28 @@ class PairPreview(ttk.Frame):
             button = ttk.Button(inputs, text="폴더 선택…", command=self._choose_root)
             button.grid(row=2, column=2, padx=(8, 0)); self.controls.append(button)
         actions = self.actions_panel = ttk.Frame(self); actions.pack(fill="x", pady=6)
+        if self.configured:
+            ttk.Label(actions, textvariable=self.data_summary, foreground=MUTED).pack(anchor="w", pady=(0, 6))
+        action_bar = ttk.WrapBar(actions)
+        if self.show_actions: action_bar.pack(fill="x")
         if not self.configured:
-            ttk.Label(actions, text="원본 항목").pack(side="left")
-        self.spin = ttk.Spinbox(actions, from_=1, to=1, textvariable=self.number, width=7)
-        if not self.configured: self.spin.pack(side="left", padx=8)
+            action_bar.add(ttk.Label(action_bar, text="원본 항목"))
+        self.spin = ttk.Spinbox(action_bar, from_=1, to=1, textvariable=self.number, width=7)
+        if not self.configured: action_bar.add(self.spin)
         self.controls.append(self.spin)
         if self.configured:
-            ttk.Label(actions, textvariable=self.data_summary, foreground=MUTED).pack(side="left", padx=(0, 12))
-            self.paths_button = ttk.Button(actions, text="입력 위치 보기", command=self._toggle_paths, style="Compact.TButton")
-            self.paths_button.pack(side="left", padx=(0, 8))
-        self.load_button = ttk.Button(actions, text="데이터 새로 읽기" if self.configured else "KEY로 한 쌍 불러오기",
+            self.paths_button = ttk.Button(action_bar, text="입력 위치 보기", command=self._toggle_paths, style="Compact.TButton")
+            action_bar.add(self.paths_button)
+        self.load_button = ttk.Button(action_bar, text="데이터 새로 읽기" if self.configured else "KEY로 한 쌍 불러오기",
                                       command=lambda: self.load(refresh=self.configured), style="Compact.TButton")
-        self.load_button.pack(side="left"); self.controls.append(self.load_button)
-        self.cancel_button = ttk.Button(actions, text="중단", command=self.cancel, state="disabled", style="Compact.TButton")
-        self.cancel_button.pack(side="left", padx=8)
+        action_bar.add(self.load_button); self.controls.append(self.load_button)
+        self.cancel_button = ttk.Button(action_bar, text="중단", command=self.cancel, state="disabled", style="Compact.TButton")
+        action_bar.add(self.cancel_button)
         if self.configured:
-            ttk.Button(actions, text="선택 데이터 보기 →", command=self._open_selected, style="Compact.TButton").pack(side="right")
+            action_bar.add(ttk.Button(action_bar, text="선택 데이터 보기 →", command=self._open_selected, style="Compact.TButton"))
         note = ttk.Label(self, textvariable=self.status, foreground=MUTED, wraplength=780)
         note.pack(fill="x", pady=(0, 6))
-        self.bind("<Configure>", lambda e: note.configure(wraplength=max(280, e.width)))
+        self.bind("<Configure>", lambda e: note.winfo_exists() and note.configure(wraplength=max(280, e.width)))
         self.views = ttk.Notebook(self); self.views.pack(fill="both", expand=True)
         if self.configured:
             self._build_browser(self.views)
@@ -148,7 +166,7 @@ class PairPreview(ttk.Frame):
         self.search_entry.bind("<Return>", lambda _: self._search())
         ttk.Button(search, text="초기화", command=self._reset_search, style="Compact.TButton").pack(side="left", padx=6)
         ttk.Combobox(search, textvariable=self.connection_state, width=14, state="readonly", style="Compact.TCombobox",
-                     values=["전체 상태", "연결됨", "원본만 있음", "보완만 있음", "KEY 중복", "KEY 해석 불가"]).pack(side="left")
+                     values=["전체 상태", "파일 오류", "연결됨", "원본만 있음", "보완만 있음", "KEY 중복", "KEY 해석 불가"]).pack(side="left")
         table = ttk.Frame(panel)
         self.table = ttk.Treeview(table, columns=("state", "key", "source", "result"), show="headings", height=4, selectmode="browse")
         for column, title, width in (("state", "연결 상태", 105), ("key", "KEY", 160),
@@ -184,6 +202,7 @@ class PairPreview(ttk.Frame):
         self.query.set(""); self.scope.set("전체"); self.connection_state.set("전체 상태")
 
     def _schedule_search(self):
+        if self.closed: return
         self.search_revision += 1
         self.search_cancel.set()
         if self.search_job is not None: self.after_cancel(self.search_job)
@@ -198,15 +217,19 @@ class PairPreview(ttk.Frame):
         self.search_revision += 1
         revision, generation, data = self.search_revision, self.generation, self.cache
         query, scope, state = self.query.get(), self.scope.get(), self.connection_state.get()
-        self.list_status.set("검색 중…")
+        events = self.queue
+        first_content_search = bool(query.strip()) and scope in ('전체', '원본 JSON', '보완 JSON') and data.search_index is None
+        self.list_status.set("JSON 내용 검색을 처음 준비하고 있습니다… 다음 검색부터 재사용합니다." if first_content_search else "검색 중…")
         def work():
             def checkpoint():
                 if cancel.is_set(): raise InterruptedError
             try:
                 found = search_catalog(data, query, scope, state, checkpoint)
-                if not cancel.is_set(): self.queue.put((generation, "search", (revision, found)))
+                if not cancel.is_set(): events.put((generation, "search", (revision, found)))
             except InterruptedError:
                 pass
+            except Exception as exc:
+                events.put((generation, "search_error", (revision, str(exc))))
         threading.Thread(target=work, daemon=True).start()
 
     def _page_count(self):
@@ -243,7 +266,9 @@ class PairPreview(ttk.Frame):
             self._select_index(selected)
         else:
             self.selection_revision += 1
+            self.selection_cancel.set()
             self.selected_index = None
+            self.selection_pending = False
             self._clear_pair()
             self.status.set("검색 결과가 없습니다. 검색어나 연결 상태를 바꿔 주세요.")
 
@@ -259,22 +284,29 @@ class PairPreview(ttk.Frame):
         self._draw()
 
     def _select_index(self, index):
-        if self.selected_index == index: return
+        if self.closed or self.selected_index == index: return
+        self.selection_cancel.set()
+        self.selection_cancel = cancel = threading.Event()
         self.selected_index = index
         self.selection_revision += 1
         revision, generation, data = self.selection_revision, self.generation, self.cache
         self._clear_pair()
         if index in self.pair_cache:
             self.pair_cache.move_to_end(index); self.show_pair(self.pair_cache[index]); return
+        self.selection_pending = True
         self.status.set("선택한 레코드의 연결값과 규칙 적용 후 JSON을 확인하고 있습니다…")
+        self._set_busy(False)
+        events, lock = self.queue, self.selection_lock
         def work():
             try:
-                with self.selection_lock:
-                    if self.closed or generation != self.generation or revision != self.selection_revision: return
+                with lock:
+                    if cancel.is_set(): return
                     pair = catalog_preview(data, index)
-                self.queue.put((generation, "selected", (revision, index, pair)))
+                    if not cancel.is_set():
+                        pair['_display'] = {name: display(pair[name], 200000) for name in ('source', 'result', 'output')}
+                events.put((generation, "selected", (revision, index, pair)))
             except Exception as exc:
-                self.queue.put((generation, "selection_error", (revision, str(exc))))
+                events.put((generation, "selection_error", (revision, str(exc))))
         threading.Thread(target=work, daemon=True).start()
 
     def _toggle_paths(self):
@@ -286,6 +318,7 @@ class PairPreview(ttk.Frame):
         self.paths_button.configure(text="입력 위치 숨기기" if not shown else "입력 위치 보기")
 
     def _result_label(self):
+        if not self.show_actions: return " ; ".join(map(str, self.results))
         return str(self.results[0]) if len(self.results) == 1 else f"{len(self.results):,}개 파일 선택" if self.results else ""
 
     def _choose_source(self):
@@ -314,16 +347,31 @@ class PairPreview(ttk.Frame):
     def _text(box, text):
         box.configure(state="normal"); box.delete("1.0", "end"); box.insert("1.0", text); box.configure(state="disabled")
 
+    @property
+    def navigation_pending(self):
+        return self.busy or self.selection_pending or self.initial_search_pending
+
+    @property
+    def ready_for_navigation(self):
+        return not self.closed and self.cache is not None and self.initial_preview_done and not self.navigation_pending
+
+    def _notify_state(self):
+        if self.on_state and not self.closed: self.on_state()
+
     def _set_busy(self, value):
         self.busy = value
         for control in self.controls:
             control.configure(state="disabled" if value else "normal")
-        self.cancel_button.configure(state="normal" if value else "disabled")
+        self.cancel_button.configure(state="normal" if self.navigation_pending else "disabled")
+        self._notify_state()
 
     def _invalidate(self, cache=True):
+        if self.closed: return
         self.cancel_event.set(); self.generation += 1
         self.search_cancel.set(); self.search_revision += 1; self.selection_revision += 1
+        self.selection_cancel.set()
         self.selected_index = None
+        self.selection_pending = self.initial_search_pending = self.initial_preview_done = False
         self.pair_cache.clear()
         if cache:
             self.cache = None
@@ -344,6 +392,7 @@ class PairPreview(ttk.Frame):
     def cancel(self):
         self._invalidate(cache=False)
         self.status.set("프리뷰 불러오기를 중단했습니다. 파일은 수정하지 않았습니다.")
+        self._notify_state()
 
     def load(self, refresh=False):
         if self.busy or self.closed:
@@ -364,25 +413,27 @@ class PairPreview(ttk.Frame):
         self.cancel_event = cancel = threading.Event()
         generation, cached = self.generation, self.cache
         source, results = self.source_files or self.source.get(), list(self.results)
+        events, rule_config, configured = self.queue, self.rule_config, self.configured
         root = self.root_path.get() or ("" if self.source_files else str(Path(source).parent))
         self.status.set("원본과 보완 결과를 읽고 KEY를 확인하고 있습니다…")
         self._set_busy(True)
         def send(kind, value):
-            self.queue.put((generation, kind, value))
+            events.put((generation, kind, value))
         def work():
             try:
                 def checkpoint():
                     if cancel.is_set(): raise ValueError("프리뷰 불러오기를 중단했습니다.")
-                stamp = fingerprint(source, results, root, self.rule_config["source"].get("glob", "**/*.json"), checkpoint) if cached else None
+                stamp = fingerprint(source, results, root, rule_config["source"].get("glob", "**/*.json"), checkpoint) if cached else None
                 data = cached if cached and cached.fingerprint == stamp else load_preview(
-                    self.rule_config, source, results, root, progress=lambda text: send("progress", text), cancel=cancel.is_set)
+                    rule_config, source, results, root, progress=lambda text: send("progress", text), cancel=cancel.is_set)
                 if cancel.is_set():
                     return
                 send("loaded", data)
-                if self.configured:
+                if configured:
                     send("ready", None)
                     return
                 pair = match_preview(data, index)
+                pair['_display'] = {name: display(pair[name], 200000) for name in ('source', 'result', 'output')}
                 if not cancel.is_set():
                     send("pair", pair)
             except Exception as exc:
@@ -399,29 +450,45 @@ class PairPreview(ttk.Frame):
                     continue
                 if kind == "progress":
                     self.status.set(value)
+                    self._notify_state()
                 elif kind == "loaded":
                     self.cache = value; self.spin.configure(to=len(value.originals))
                     self.data_summary.set(f"원본 {len(value.originals):,} · 보완 {value.result_total:,}건 · 세션 보관")
                 elif kind == "ready":
+                    self.initial_search_pending = not self.initial_preview_done
                     self._set_busy(False)
                     self.status.set(f"원본 {len(self.cache.originals):,}건 · 보완 {self.cache.result_total:,}건을 세션에 보관했습니다.")
                     self._search()
                 elif kind == "search":
                     revision, found = value
                     if revision == self.search_revision:
+                        self.initial_search_pending = False
                         self.filtered = found; self.page = 1
                         self._render_page()
+                        if not found:
+                            self.initial_preview_done = True
+                        self._notify_state()
                 elif kind == "selected":
                     revision, index, pair = value
                     if revision == self.selection_revision:
                         self.pair_cache[index] = pair
                         if len(self.pair_cache) > 16: self.pair_cache.popitem(last=False)
                         self.show_pair(pair)
+                elif kind == "search_error":
+                    revision, message = value
+                    if revision == self.search_revision:
+                        self.initial_search_pending = False
+                        self.list_status.set("검색 실패: " + message)
+                        self._notify_state()
                 elif kind == "selection_error":
                     revision, message = value
-                    if revision == self.selection_revision: self.status.set("프리뷰 확인: " + message)
+                    if revision == self.selection_revision:
+                        self.selection_pending = False
+                        self.initial_preview_done = False
+                        self.status.set("프리뷰 확인: " + message)
+                        self._set_busy(False)
                 elif kind == "error":
-                    self._set_busy(False); self.status.set("프리뷰 확인: " + value)
+                    self.status.set("프리뷰 확인: " + value); self._set_busy(False)
                 elif kind == "pair":
                     self._set_busy(False); self.show_pair(value)
         except queue.Empty:
@@ -430,14 +497,16 @@ class PairPreview(ttk.Frame):
 
     def show_pair(self, pair):
         self.pair = pair
+        self.selection_pending = False
+        self.initial_preview_done = True
         extra = f" · KEY 해석 불가 {pair['invalid_result_keys']:,}건" if pair["invalid_result_keys"] else ""
         location = "" if self.configured else f"\n{pair['source_location']} ↔ {pair['result_location']}"
         self.status.set(f"KEY {display(pair['key'], 100)} · {pair['message']}{extra}{location}")
         for box, name in zip(self.json_boxes, ("source", "result")):
-            self._text(box, display(pair[name], 200000))
-        self._text(self.output_box, display(pair["output"], 200000))
-        self.output_note.set(("연결 불가 · 원본 유지 (전체 검증에서 확인)" if pair["source"] is not None else
-                              "연결할 원본 없음 · 출력 대상 없음") if pair["status"] == "unpaired" else
+            self._text(box, pair['_display'][name] if '_display' in pair else display(pair[name], 200000))
+        self._text(self.output_box, pair['_display']['output'] if '_display' in pair else display(pair["output"], 200000))
+        self.output_note.set(("연결 불가 · 원본 유지 · 처리 사유는 결과서에서 확인" if pair["source"] is not None else
+                              "연결할 원본 없음 · 출력 대상 없음") if pair["status"] in ("unpaired", "no_result", "orphan_result", "duplicate_result", "duplicate_source_key", "invalid_source", "invalid_result") else
                              "검토 필요 · 저장 시 원본 유지" if pair["status"] == "review_required" else
                              "조건 제외 · 저장 시 원본 유지" if pair["status"] == "excluded" else
                              "변경 없음 · 저장 시 원본과 동일" if pair["status"] == "unchanged" else
@@ -485,7 +554,7 @@ class PairPreview(ttk.Frame):
             b = canvas.create_text(right + 10, y + 10, text=target, anchor="nw", width=cell - 20, fill=INK, font=("맑은 고딕", 10), tags=tag)
             bottom = max(canvas.bbox(a)[3], canvas.bbox(b)[3]) + 10
             for x in (pad, right):
-                rect = canvas.create_rectangle(x, y, x + cell, bottom, fill="white", outline="#dce3ee", tags=tag)
+                rect = canvas.create_rectangle(x, y, x + cell, bottom, fill="white", outline=ttk.BORDER, tags=tag)
                 canvas.tag_lower(rect, a)
             canvas.create_line(pad + cell + 6, (y + bottom) / 2, right - 6, (y + bottom) / 2, fill=color, width=2,
                                arrow="both" if row["kind"] == "key" else "first", tags=tag)
@@ -514,16 +583,25 @@ class PairPreview(ttk.Frame):
                 self._text(box, f"{row['note']}{location}\n\n{row.get('source_label', '원본 값')}\n{row['source']}\n\n보완 값\n{row['result']}\n\n변환 후 가져올 값\n{row['evaluated']}")
                 break
 
+    def _destroyed(self, event):
+        if event.widget is self: self.close()
+
     def close(self):
         if self.closed:
             return
         self.closed = True; self.cancel_event.set(); self.generation += 1
-        self.search_cancel.set()
-        if self.search_job is not None:
-            self.after_cancel(self.search_job); self.search_job = None
-        if self.auto_job is not None:
-            self.after_cancel(self.auto_job)
-            self.auto_job = None
-        self.after_cancel(self.poll_job)
+        self.search_cancel.set(); self.search_revision += 1; self.selection_revision += 1
+        self.selection_cancel.set()
+        remove_traces(self.traces)
+        self.queue.close()
+        for name in ("search_job", "auto_job", "poll_job"):
+            job = getattr(self, name)
+            if job is not None: self.after_cancel(job)
+            setattr(self, name, None)
         self.cache = self.pair = None
         self.pair_cache.clear()
+        self.filtered.clear()
+        self.selected_index = None
+        self.busy = False
+        self.on_state = None
+        release_variables(self)

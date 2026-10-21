@@ -1,4 +1,5 @@
 import copy
+import gc
 import json
 import tempfile
 import time
@@ -246,7 +247,13 @@ class PairTests(unittest.TestCase):
 
 
 class PairUiTests(unittest.TestCase):
-    setUp = PairTests.setUp
+    def setUp(self):
+        # These tests create a fresh Tcl interpreter per case. Collect destroyed
+        # roots on the main thread before the next preview worker can trigger GC.
+        gc.collect()
+        PairTests.setUp(self)
+        self.addCleanup(gc.collect)
+
     write = PairTests.write
 
     def test_configured_preview_auto_loads_reuses_cache_and_cancels_pending_start(self):

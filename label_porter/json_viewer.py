@@ -6,10 +6,12 @@ import threading
 import time
 import tkinter as tk
 from pathlib import Path
-from tkinter import filedialog, scrolledtext, ttk
+from tkinter import filedialog, scrolledtext
+from . import widgets as ttk
 
 from .formats import escape_token, read_document
 from .file_browser import FileBrowser
+from .ui_lifecycle import UiEventQueue, release_variables
 
 
 def value_description(value):
@@ -45,12 +47,14 @@ def bounded_preview(value, depth=0, budget=None):
 class JsonViewer:
     PAGE = 100
 
-    def __init__(self, parent, initial=None, paths=()):
-        self.window = tk.Toplevel(parent)
+    def __init__(self, parent, initial=None, paths=(), *, on_close=None):
+        self.on_close = on_close
+        self.window = ttk.create_window(parent)
         self.window.title("JSON 뷰어 · 파일 검색과 데이터 미리보기")
-        self.window.geometry("1280x780")
-        self.window.minsize(900, 600)
-        self.events = queue.Queue()
+        width, height = ttk.window_size(self.window, (1280, 780))
+        self.window.geometry(f"{width}x{height}")
+        self.window.minsize(min(900, width), min(600, height))
+        self.events = UiEventQueue()
         self.cancel = threading.Event()
         self.alive, self.loading = True, False
         self.generation = 0
@@ -73,17 +77,17 @@ class JsonViewer:
         left.configure(width=320); left.pack_propagate(False)
         right.configure(width=450); right.pack_propagate(False)
         body.add(left, weight=1); body.add(right, weight=1)
-        workspace.bind('<Configure>', lambda e: workspace.sashpos(0, int(e.width*.28)))
-        body.bind('<Configure>', lambda e: body.sashpos(0, int(e.width*.45)))
+        workspace.bind('<Configure>', lambda e: workspace.sashpos(0, int(e.width*.28)) if self.alive and len(workspace.panes()) > 1 else None)
+        body.bind('<Configure>', lambda e: body.sashpos(0, int(e.width*.45)) if self.alive and len(body.panes()) > 1 else None)
         self.tree = ttk.Treeview(left, columns=("type",), show="tree headings")
         self.tree.heading("#0", text="필드 / 배열 인덱스"); self.tree.heading("type", text="자료형 · 개수")
         self.tree.column("#0", width=180, minwidth=70); self.tree.column("type", width=130, minwidth=80)
-        left.bind('<Configure>', lambda e: (self.tree.column('#0', width=max(70, int((e.width-18)*.55))),
+        left.bind('<Configure>', lambda e: self.alive and self.tree.winfo_exists() and (self.tree.column('#0', width=max(70, int((e.width-18)*.55))),
                                            self.tree.column('type', width=max(80, int((e.width-18)*.45)))))
         scroll = ttk.Scrollbar(left, command=self.tree.yview); scroll.pack(side="right", fill="y")
         self.tree.configure(yscrollcommand=scroll.set); self.tree.pack(fill="both", expand=True)
         ttk.Label(right, textvariable=self.selection_info, wraplength=440).pack(fill="x", padx=10, pady=(0, 8))
-        ttk.Label(right, text="값 미리보기 · 큰 값은 일부만 표시합니다.", foreground="#69717e").pack(anchor="w", padx=10)
+        ttk.Label(right, text="값 미리보기 · 큰 값은 일부만 표시합니다.", foreground=ttk.MUTED).pack(anchor="w", padx=10)
         self.preview = scrolledtext.ScrolledText(right, wrap="word", font=("Consolas", 10), state="disabled")
         self.preview.pack(fill="both", expand=True, padx=(10, 0), pady=(8, 0))
         self.tree.bind("<<TreeviewOpen>>", self.expand)
@@ -105,6 +109,7 @@ class JsonViewer:
         if path: self.browser.set_inputs([path])
 
     def load(self, path):
+        if not self.alive: return
         path = Path(path)
         self.cancel.set()
         self.cancel = threading.Event()
@@ -118,6 +123,7 @@ class JsonViewer:
         self.tree.delete(*self.tree.get_children())
         self.values.clear(); self.more.clear()
         self.selection_info.set("새 파일을 읽고 있습니다."); self._preview("")
+        events = self.events
         def worker():
             last = -1
             def checkpoint():
@@ -128,13 +134,13 @@ class JsonViewer:
                 now = time.monotonic()
                 if now - last >= 0.15:
                     last = now
-                    self.events.put((generation, "progress", (done, total, count)))
+                    events.put((generation, "progress", (done, total, count)))
             try:
                 document = read_document(path, fmt='auto', progress=progress, checkpoint=checkpoint)
                 checkpoint()
-                self.events.put((generation, "done", document))
+                events.put((generation, "done", document))
             except Exception as exc:
-                self.events.put((generation, "error", str(exc)))
+                events.put((generation, "error", str(exc)))
         threading.Thread(target=worker, daemon=True, name="json-viewer").start()
 
     def poll(self):
@@ -221,7 +227,16 @@ class JsonViewer:
         self.preview.configure(state="disabled")
 
     def destroyed(self, event):
-        if event.widget == self.window:
+        if event.widget == self.window and self.alive:
             self.alive = False
+            self.loading = False
+            self.generation += 1
             self.cancel.set()
             self.window.after_cancel(self.job)
+            self.job = None
+            self.events.close()
+            self.browser.close()
+            self.values.clear(); self.more.clear()
+            release_variables(self)
+            callback, self.on_close = self.on_close, None
+            if callback: callback(self)

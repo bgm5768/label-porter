@@ -2,9 +2,11 @@
 import queue
 import threading
 from pathlib import Path
-from tkinter import StringVar, ttk
+from tkinter import StringVar
+from . import widgets as ttk
 
 from .input_files import folder_files
+from .ui_lifecycle import UiEventQueue, remove_traces, release_variables
 
 
 class FileBrowser(ttk.Frame):
@@ -19,7 +21,7 @@ class FileBrowser(ttk.Frame):
         self.page, self.generation = 1, 0
         self.closed = False
         self.cancel = threading.Event()
-        self.events = queue.Queue()
+        self.events = UiEventQueue()
         self.query = StringVar()
         self.info = StringVar(value='폴더 또는 파일을 선택하세요.')
         self.page_info = StringVar(value='0 / 0')
@@ -41,16 +43,18 @@ class FileBrowser(ttk.Frame):
         area.bind('<Configure>', lambda e: (self.table.column('name', width=max(100, int((e.width-18)*.58))),
                                            self.table.column('folder', width=max(80, int((e.width-18)*.42)))))
         self.table.bind('<<TreeviewSelect>>', self.select)
-        self.query.trace_add('write', self.schedule_filter)
+        self.traces = [(self.query, self.query.trace_add('write', self.schedule_filter))]
         self.bind('<Destroy>', self.destroyed)
         self.job = self.after(80, self.poll)
 
     def set_inputs(self, targets, initial=None, append=False):
+        if self.closed: return
         self.query.set('')
         self.cancel.set(); self.cancel = stop = threading.Event()
         self.generation += 1
         generation = self.generation
         existing = list(self.paths) if append else []
+        events = self.events
         self.info.set('파일 목록을 읽고 있습니다…')
         def checkpoint():
             if stop.is_set(): raise InterruptedError()
@@ -64,9 +68,9 @@ class FileBrowser(ttk.Frame):
                     elif path.is_file(): found.append(path)
                     else: raise ValueError(f'파일 또는 폴더를 찾을 수 없습니다: {path}')
                 checkpoint()
-                self.events.put((generation, 'files', (sorted(set(found)), initial)))
+                events.put((generation, 'files', (sorted(set(found)), initial)))
             except InterruptedError: pass
-            except Exception as exc: self.events.put((generation, 'error', str(exc)))
+            except Exception as exc: events.put((generation, 'error', str(exc)))
         threading.Thread(target=work, daemon=True, name='file-browser').start()
 
     def poll(self):
@@ -91,6 +95,7 @@ class FileBrowser(ttk.Frame):
         self.job = self.after(80, self.poll)
 
     def schedule_filter(self, *_):
+        if self.closed: return
         if self.search_job: self.after_cancel(self.search_job)
         self.search_job = self.after(120, self.filter)
 
@@ -117,11 +122,23 @@ class FileBrowser(ttk.Frame):
         self.page += delta; self.render()
 
     def select(self, _event=None):
+        if self.closed: return
         selected = self.table.selection()
         if selected: self.on_select(self.paths[int(selected[0])])
 
     def destroyed(self, event):
         if event.widget != self: return
-        self.closed = True; self.cancel.set()
-        self.after_cancel(self.job)
-        if self.search_job: self.after_cancel(self.search_job)
+        self.close()
+
+    def close(self):
+        if self.closed: return
+        self.closed = True; self.cancel.set(); self.generation += 1
+        remove_traces(self.traces)
+        self.events.close()
+        for name in ('job', 'search_job'):
+            job = getattr(self, name)
+            if job is not None: self.after_cancel(job)
+            setattr(self, name, None)
+        self.on_select = None
+        self.paths.clear(); self.filtered.clear()
+        release_variables(self)

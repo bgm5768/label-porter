@@ -12,14 +12,15 @@ JSON_SUFFIXES = {'.json', '.jsonl', '.ndjson'}
 RESULT_SUFFIXES = JSON_SUFFIXES | {'.csv'}
 
 
-def folder_files(folder, suffixes=RESULT_SUFFIXES, checkpoint=None):
+def folder_files(folder, suffixes=RESULT_SUFFIXES, checkpoint=None, exclude_directories=()):
     folder = Path(folder).expanduser().resolve()
+    excluded = {Path(p).resolve() for p in exclude_directories}
     if not folder.is_dir():
         raise DataError(f"폴더를 찾을 수 없습니다: {folder}")
     found = []
     for current, directories, names in os.walk(folder, followlinks=False):
         if checkpoint: checkpoint()
-        directories[:] = sorted(d for d in directories if not (Path(current) / d).is_symlink()
+        directories[:] = sorted(d for d in directories if (not excluded or (Path(current) / d).resolve() not in excluded) and not (Path(current) / d).is_symlink()
                                 and not (hasattr(Path, 'is_junction') and (Path(current) / d).is_junction()))
         for name in sorted(names):
             path = Path(current) / name

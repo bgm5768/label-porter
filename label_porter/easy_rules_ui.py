@@ -7,12 +7,14 @@ import threading
 from dataclasses import replace
 from pathlib import Path
 import tkinter as tk
-from tkinter import filedialog, scrolledtext, ttk
+from tkinter import filedialog, scrolledtext
+from . import widgets as ttk
 
 from .easy_rules import analyze_inputs, friendly, make_rule, select_key, key_fields, key_stats, connection_option
 from .pair_preview import display
 from .pair_preview_ui import PairPreview
 from .ui import ScrollPage, card
+from .ui_lifecycle import UiEventQueue, remove_traces, release_variables
 
 
 class EasyRules(ttk.Frame):
@@ -23,7 +25,7 @@ class EasyRules(ttk.Frame):
         self.on_change, self.on_finish, self.on_exit = on_change, on_finish, on_exit
         self.stage, self.busy, self.closed = 0, False, False
         self.revision, self.cancel_event = 0, threading.Event()
-        self.queue = queue.Queue()
+        self.queue = UiEventQueue()
         self.inputs = self.data = self.preview = self.rule_config = None
         self.options, self.selected = [], set()
         self.source = tk.StringVar(value=source)
@@ -38,9 +40,12 @@ class EasyRules(ttk.Frame):
         self.summary = tk.StringVar()
         self.connection = tk.StringVar()
         self._build()
-        self.query.trace_add("write", lambda *_: self._render_fields())
-        self.show_all.trace_add("write", lambda *_: self._render_fields())
-        self.source.trace_add("write", lambda *_: self._input_changed())
+        self.traces = [(variable, variable.trace_add("write", callback)) for variable, callback in (
+            (self.query, lambda *_: self._render_fields()),
+            (self.show_all, lambda *_: self._render_fields()),
+            (self.source, lambda *_: self._input_changed()),
+        )]
+        self.bind("<Destroy>", self._destroyed, add="+")
         self.last_state = None
         self.poll_job = self.after(80, self._poll)
         self._show(0)
@@ -252,13 +257,15 @@ class EasyRules(ttk.Frame):
         self.on_change()
 
     def _work(self, function, kind):
+        if self.closed: return
         self.busy = True
         self.revision += 1
         revision = self.revision
         cancel = self.cancel_event = threading.Event()
         self.stop.pack(side="bottom", anchor="w", pady=(6, 0))
         self.on_change()
-        def send(kind, value): self.queue.put((revision, kind, value))
+        events = self.queue
+        def send(kind, value): events.put((revision, kind, value))
         def worker():
             try:
                 value = function(cancel.is_set, lambda message: send("progress", message))
@@ -284,10 +291,11 @@ class EasyRules(ttk.Frame):
         if not self.can_next: return
         if self.stage == 0:
             source, results = self.source.get(), list(self.results)
-            if self.inputs and str(Path(source).expanduser().resolve()) == self.inputs.source and [str(Path(p).resolve()) for p in results] == self.inputs.result_files:
+            if self.inputs and getattr(self, 'input_selection', None) == (source, tuple(results)):
                 self.status.set("읽어 둔 데이터와 선택한 설정을 유지합니다. 외부 파일 변경은 ‘데이터 새로 읽기’로 반영하세요.")
                 self._show(1); return
             self.status.set("파일을 읽고 연결 기준을 찾고 있습니다…")
+            self.pending_selection = (source, tuple(results))
             self._work(lambda cancel, progress: analyze_inputs(source, results, progress, cancel), "inputs")
         elif self.stage == 1:
             try:
@@ -407,6 +415,7 @@ class EasyRules(ttk.Frame):
                     self.busy = False; self.stop.pack_forget()
                     if kind == "inputs":
                         self.inputs = value
+                        self.input_selection = self.pending_selection
                         self.data = None; self.options = []; self.selected.clear()
                         self.field_manual.pack_forget()
                         self.summary.set(f"원본 {len(value.originals):,}건 · 보완 {len(value.incoming):,}건")
@@ -439,9 +448,19 @@ class EasyRules(ttk.Frame):
             self.on_change()  # Preview loading completes on its own queue.
         self.poll_job = self.after(100, self._poll)
 
+    def _destroyed(self, event):
+        if event.widget is self: self.close()
+
     def close(self):
         if self.closed: return
         self.closed = True; self.cancel_event.set(); self.revision += 1
+        remove_traces(self.traces)
+        self.queue.close()
         self.after_cancel(self.poll_job)
+        self.poll_job = None
         if self.preview: self.preview.close()
         self.inputs = self.data = None
+        self.options.clear(); self.selected.clear()
+        self.on_change = self.on_finish = self.on_exit = None
+        self.busy = False
+        release_variables(self)

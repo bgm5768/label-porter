@@ -13,6 +13,7 @@ from .review_report import write_review
 from .detail_store import DetailStore
 from .result_dashboard import write_dashboard
 from .examine import category_for, label_path, ResultArchive
+from .json_display import json_prefix
 
 
 STATUS = {
@@ -31,7 +32,8 @@ def csv_safe(value):
 
 
 class Reports:
-    def __init__(self, directory: Path, split_output=False, preview=False, result_spec=None, result_files=None):
+    def __init__(self, directory: Path, split_output=False, preview=False, result_spec=None, result_files=None, record_sink=None):
+        self.record_sink = record_sink
         self.preview = preview
         self.directory = directory
         self.split_output = bool(split_output)
@@ -98,6 +100,12 @@ class Reports:
             detail["examine_data"] = incoming[0]
 
     def record(self, scope, status, source_file="", record_path="", key="", result_file="", result_row="", reason="", changed_fields=0, evidence=None):
+        connections = (evidence or {}).pop("_preview_connections", None)
+        if self.record_sink:
+            self.record_sink({"scope": scope, "status": status, "source_file": source_file,
+                "record_path": record_path, "key": key, "result_file": result_file,
+                "result_row": result_row, "reason": reason, "changed_fields": changed_fields,
+                **(evidence or {})}, connections)
         self.counts[status] += 1
         self.scope_counts[scope][status] += 1
         category = category_for(scope, status, result_row, bool(evidence and evidence.get("issues")))
@@ -158,8 +166,9 @@ class Reports:
                         detail["archive_error"] = str(exc)
                 atomic_text(base / "examine" / category / "details" / f"{self._examine_number:08d}.json",
                             json.dumps(detail, ensure_ascii=False, allow_nan=False, indent=2) + "\n")
-        self._all_details.write(json.dumps(detail, ensure_ascii=False, allow_nan=False) + "\n")
-        link = review_link or self.details.add(detail)
+        serialized = json.dumps(detail, ensure_ascii=False, allow_nan=False)
+        self._all_details.write(serialized + "\n")
+        link = review_link or self.details.add(detail, serialized)
         groups = ["source", "output"] if scope == "source" else ["result"] if scope == "result" and result_row else ["files"]
         if status in ("updated", "planned_update", "unchanged") and not attention and scope == "source":
             groups.append("completed")
@@ -192,8 +201,8 @@ class Reports:
                    "result_file": result_file, "result_row": result_row, "preview": preview, **change}
             self._changes.write(json.dumps(row, ensure_ascii=False, allow_nan=False) + "\n")
             def short(value):
-                text = json.dumps(value, ensure_ascii=False)
-                return text if len(text) <= 180 else text[:180] + "… (상세에서 전체 값 확인)"
+                text, truncated = json_prefix(value, 180, indent=None)
+                return text + "… (상세에서 전체 값 확인)" if truncated else text
             self.catalog.append({"scope": "change", "status": "planned_update" if preview else "updated",
                 "상태": "변경 예정" if preview else "변경 완료", "원본": source_file, "보완": result_file, "키": key,
                 "위치": change["path"], "사유": f'{change["path"]}\n{short(change.get("before"))} → {short(change.get("after"))}',
@@ -205,8 +214,9 @@ class Reports:
                 if "_record" in item:
                     detail = {"status": "pending", "reason": item["사유"], "platform_record": item.pop("_record"),
                               "result_file": item["보완"], "result_row": item["위치"], "preview": self.preview}
-                    item["link"] = self.details.add(detail)
-                    self._all_details.write(json.dumps(detail, ensure_ascii=False) + "\n")
+                    serialized = json.dumps(detail, ensure_ascii=False)
+                    item["link"] = self.details.add(detail, serialized)
+                    self._all_details.write(serialized + "\n")
             self.catalog.extend(self.result_catalog.values())
             self.details.close()
             for pending in self._pending_details:

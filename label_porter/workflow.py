@@ -8,8 +8,8 @@ import tkinter as tk
 import webbrowser
 from pathlib import Path
 from tkinter import filedialog, scrolledtext
-from .engine import run
 from .input_files import folder_files, source_paths
+from .input_check import InputRequest, inspect_inputs, selection_paths
 
 AI_GUIDE_FILENAME = "AI_규칙작성_가이드.md"
 
@@ -25,6 +25,80 @@ def default_output_directory():
 
 
 class Workflow:
+    def _session_ready(self):
+        panel = self.mapping.preview if self.mapping and not self.mapping.closed else None
+        return bool(panel and panel.ready_for_navigation)
+
+    def _preview_state_changed(self):
+        panel = self.mapping.preview if self.mapping and not self.mapping.closed else None
+        if panel is None: return
+        if self.running and not self.preparing: return
+        if self.preview_generation != panel.generation:
+            self.preview_generation = panel.generation
+            self.preview_fingerprint = self.last_summary = self.last_run = None
+            self.connection_confirmed = False
+            for var in self.metric_values.values(): var.set('—')
+            self.status_table.delete(*self.status_table.get_children())
+            self.report_button.configure(state='disabled')
+            self.folder_button.configure(state='disabled')
+        was_preparing = self.preparing
+        self.running = self.preparing = panel.navigation_pending
+        if self.preparing:
+            self.cancel_event = panel.cancel_event
+            if not was_preparing:
+                self.preparation_progress.configure(mode='indeterminate')
+                self.preparation_progress.start()
+        elif was_preparing:
+            self.preparation_progress.stop()
+        self.status.set(panel.status.get())
+        self._sync_actions()
+
+    def _run_validation(self, preview):
+        if self.running: return
+        try:
+            self._check_inputs()
+            request = self._input_request()
+            if not preview and self.preview_fingerprint is None:
+                raise ValueError('4단계에서 전체 데이터 검증을 먼저 실행하세요.')
+        except (ValueError, TypeError, KeyError) as exc:
+            self.status.set(f'입력 확인: {exc}')
+            return
+        expected = self.preview_fingerprint
+        owned = tuple(self.owned_outputs)
+        self.preview_fingerprint = None
+        self.running = self.checking_inputs = True
+        self.active_request = request
+        self.cancel_event = cancel = threading.Event()
+        self.report_button.configure(state='disabled')
+        self.folder_button.configure(state='disabled')
+        self.preview_button.configure(state='disabled')
+        self.status.set('전체 데이터 검증을 시작합니다.' if preview else '최종 복사본을 저장합니다.')
+        self._save_settings()
+        self._sync_actions()
+        events = self.queue
+        def work():
+            from .engine import run, Cancelled
+            try:
+                def checkpoint():
+                    if cancel.is_set(): raise Cancelled('작업을 중단했습니다.')
+                results, stamp = inspect_inputs(request, checkpoint, stamp=True, exclude_result_directories=owned)
+                if not preview and stamp != expected:
+                    raise ValueError('입력이 변경되었습니다. 전체 데이터 검증을 다시 실행하세요.')
+                events.put(('run_fingerprint', stamp))
+                result = run(request.source, results, request.output, request.config, preview=preview,
+                             progress=lambda event: events.put(('progress', event)), cancel=cancel,
+                             split_output=request.split)
+                events.put(('owned_output', result.directory))
+                if preview and result.summary['status'].startswith('completed'):
+                    _, current = inspect_inputs(request, checkpoint, stamp=True,
+                                                exclude_result_directories=(*owned, result.directory))
+                    if current != stamp:
+                        raise ValueError('검증 도중 입력이 변경되었습니다. 전체 데이터 검증을 다시 실행하세요.')
+                events.put(('complete', result))
+            except Exception as exc:
+                events.put(('error', str(exc)))
+        threading.Thread(target=work, daemon=True, name='validate-or-save').start()
+
     def _document_view(self, frame, text):
         from .markdown_viewer import MarkdownViewer
         return MarkdownViewer(frame, text, navigate=lambda index: self.tabs.select(index))
@@ -48,27 +122,44 @@ class Workflow:
                 self.status.set(f"가이드 저장 실패: {exc}")
 
     def _check_inputs(self):
+        """Check selections only. Filesystem validation belongs to the worker."""
         if not self.rule_ready:
             raise ValueError("1단계에서 프로젝트 규칙을 먼저 준비하세요.")
         if not self.source.get().strip() and not self.source_files:
             raise ValueError("원본 라벨 폴더 또는 파일을 선택하세요.")
-        if not source_paths(self._source_input(), self._get_config()['source'].get('glob', '**/*.json')):
-            raise ValueError("규칙의 파일 패턴에 맞는 원본 JSON이 없습니다.")
-        results = self._result_files()
-        if not results or any(not Path(path).is_file() for path in results):
+        if not self.result_folder and not self.result_paths:
             raise ValueError("실제 처리할 작업 결과 파일을 선택하세요.")
         if not self.output.get().strip():
             self.output.set(str(default_output_directory()))
-        source, output = Path(self.source.get()).resolve(), Path(self.output.get()).resolve()
-        if not self.source_files and (output == source or output.is_relative_to(source)):
-            raise ValueError("저장 위치는 원본 폴더 밖으로 선택하세요.")
-        if output.exists() and not output.is_dir():
-            raise ValueError("저장 위치가 파일입니다. 폴더를 선택하세요.")
 
-    def _fingerprint(self):
-        result_stats = [(str(Path(path).resolve()), Path(path).stat().st_size, Path(path).stat().st_mtime_ns) for path in self._result_files()]
-        return json.dumps([self._get_config(), self._source_input(), result_stats,
-                           str(Path(self.output.get()).resolve()), self.split_output.get()], ensure_ascii=False, sort_keys=True)
+    def _input_request(self):
+        return InputRequest(self._get_config(), self._source_input(), tuple(self.result_paths),
+                            self.result_folder, self.output.get(), self.split_output.get())
+
+    def _prepare_mapping(self):
+        try:
+            self._check_inputs()
+            request = self._input_request()
+        except (ValueError, TypeError, KeyError) as exc:
+            if self.rule_ready: self._show_step(1)
+            self.status.set(f"입력 확인: {exc}")
+            return
+        self.running = True
+        self.checking_inputs = True
+        self.cancel_event = cancel = threading.Event()
+        self.status.set("입력 파일을 확인하고 있습니다… 다른 작업을 계속하거나 중단할 수 있습니다.")
+        self._sync_actions()
+        events = self.queue
+        owned = tuple(self.owned_outputs)
+        def work():
+            try:
+                def checkpoint():
+                    if cancel.is_set(): raise InterruptedError("입력 확인을 중단했습니다.")
+                results, _ = inspect_inputs(request, checkpoint, exclude_result_directories=owned)
+                events.put(("mapping_ready", (request, results)))
+            except Exception as exc:
+                events.put(("input_error", str(exc)))
+        threading.Thread(target=work, daemon=True, name="input-check").start()
 
     def _choose_source(self):
         path = filedialog.askdirectory(title="보완 전 원본 라벨 폴더 선택", parent=self.root)
@@ -90,7 +181,7 @@ class Workflow:
         paths = filedialog.askopenfilenames(title="원본 라벨 파일 다중 선택", parent=self.root,
             filetypes=[("JSON", "*.json *.jsonl *.ndjson"), ("모든 파일", "*.*")])
         if paths:
-            self.source_files = list(dict.fromkeys([*self.source_files, *[str(Path(p).resolve()) for p in paths]]))
+            self.source_files = selection_paths([*self.source_files, *paths])
             self.source.set(''); self._render_sources()
 
     def _choose_result_folder(self):
@@ -125,16 +216,13 @@ class Workflow:
 
     def _output_changed(self, *_):
         value = self.output.get().strip()
-        self.output_mode = "default" if not value or Path(value).resolve() == default_output_directory() else "custom"
+        self.output_mode = "default" if not value or os.path.normcase(os.path.abspath(value)) == os.path.normcase(str(default_output_directory())) else "custom"
 
     def _choose_results(self):
         paths = filedialog.askopenfilenames(title="플랫폼 결과 또는 보완 파일 다중 선택", parent=self.root, filetypes=[("JSON / CSV", "*.json *.jsonl *.ndjson *.csv"), ("모든 파일", "*.*")])
         if not paths: return
         self.result_folder = ''
-        for path in paths:
-            resolved = str(Path(path).resolve())
-            if resolved not in self.result_paths:
-                self.result_paths.append(resolved)
+        self.result_paths = selection_paths([*self.result_paths, *paths])
         self._render_results()
 
     def _remove_results(self):
@@ -151,46 +239,14 @@ class Workflow:
         self.result_count.set('폴더 선택 · JSON / JSONL / NDJSON / CSV · 하위 폴더 포함' if self.result_folder else
                               f'{len(self.result_paths):,}개 파일 선택 · 파일 추가 선택 가능')
 
-    def _start(self, preview):
-        if self.running:
-            return
-        try:
-            config = self._get_config()
-            self._check_inputs()
-            fingerprint = self._fingerprint()
-            if not preview and self.preview_fingerprint != fingerprint:
-                raise ValueError("현재 규칙과 입력으로 검증 미리보기를 먼저 실행하세요.")
-        except Exception as exc:
-            self.status.set(f"입력 확인: {exc}")
-            return
-        source, results, output = self._source_input(), self._result_files(), self.output.get()
-        split_output = self.split_output.get()
-        self._save_settings()
-        self.running = True
-        self.active_fingerprint = fingerprint
-        self.preview_fingerprint = None
-        self.cancel_event.clear()
-        self.preview_button.configure(state="disabled")
-        self.run_button.configure(state="disabled")
-        self.report_button.configure(state="disabled")
-        self.folder_button.configure(state="disabled")
-        self.cancel_button.configure(state="normal")
-        self.steps.select(self.review_step)
-        for index in range(self.review_step): self.steps.tab(index, state="disabled")
-        self.status.set("검증 미리보기를 시작합니다." if preview else "새 복사본에 반영을 시작합니다.")
-        self._append_log(f"\n{'미리보기' if preview else '복사본 반영'} · {config['name']}\n원본: {self._source_label()}\n")
-        def work():
-            try:
-                result = run(source, results, output, config, preview, lambda event: self.queue.put(("progress", event)), self.cancel_event, split_output=split_output)
-                self.queue.put(("complete", result))
-            except Exception as exc:
-                self.queue.put(("error", str(exc)))
-        threading.Thread(target=work, daemon=True).start()
-
     def _cancel(self):
+        if self.preparing and self.mapping:
+            self.mapping.preview.cancel()
+            return
         self.cancel_event.set()
         self.cancel_button.configure(state="disabled")
-        self.status.set("현재 처리 단계가 끝나는 대로 중단하고 보고서를 저장합니다.")
+        self.status.set("입력 확인을 중단하고 있습니다. 데이터는 저장하지 않습니다." if getattr(self, 'checking_inputs', False)
+                        else "현재 처리 단계가 끝나는 대로 중단하고 보고서를 저장합니다.")
 
     def _append_log(self, text):
         self.log.configure(state="normal")
