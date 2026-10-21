@@ -54,7 +54,8 @@ def verify_partitions(directory, manifest, summary, config):
             document = read_document(path, spec.get("encoding", "utf-8-sig"), "json")
             assert len(list(records(document, spec))) == entry["records"], "분리 라벨 건수 불일치"
     for source_file, rows in rows_by_source.items():
-        original = read_document(Path(manifest["source_directory"]) / source_file, spec.get("encoding", "utf-8-sig"), "json")
+        original_path = Path(manifest.get('source_inputs', {}).get(source_file, str(Path(manifest["source_directory"]) / source_file)))
+        original = read_document(original_path, spec.get("encoding", "utf-8-sig"), "json")
         combined = read_document(directory / "data" / source_file, spec.get("encoding", "utf-8-sig"), "json")
         expected_addresses = {f"doc:{doc_index}{pointer}" for doc_index, pointer, _ in records(combined, spec)}
         seen_source, seen_destination = set(), set()
@@ -94,7 +95,7 @@ def verify(directory):
     actual_names = {path.relative_to(directory / "data").as_posix() for path in (directory / "data").rglob("*") if path.is_file()}
     assert actual_names == {entry["path"] for entry in manifest["files"]}, "복사본의 파일 목록이 명세와 다릅니다."
     for number, entry in enumerate(manifest["files"], 1):
-        original = source / entry["path"]
+        original = Path(manifest.get('source_inputs', {}).get(entry['path'], str(source / entry['path'])))
         output = directory / "data" / entry["path"]
         assert digest(original) == entry["source_sha256"], f"원본 내용 변경: {entry['path']}"
         assert digest(output) == entry["output_sha256"], f"결과 해시 불일치: {entry['path']}"

@@ -9,6 +9,7 @@ from pathlib import Path
 from tkinter import filedialog, scrolledtext, ttk
 
 from .formats import escape_token, read_document
+from .file_browser import FileBrowser
 
 
 def value_description(value):
@@ -44,11 +45,11 @@ def bounded_preview(value, depth=0, budget=None):
 class JsonViewer:
     PAGE = 100
 
-    def __init__(self, parent, initial=None):
+    def __init__(self, parent, initial=None, paths=()):
         self.window = tk.Toplevel(parent)
-        self.window.title("JSON 뷰어 · 항목 수와 구조 확인")
-        self.window.geometry("1000x720")
-        self.window.minsize(700, 480)
+        self.window.title("JSON 뷰어 · 파일 검색과 데이터 미리보기")
+        self.window.geometry("1280x780")
+        self.window.minsize(900, 600)
         self.events = queue.Queue()
         self.cancel = threading.Event()
         self.alive, self.loading = True, False
@@ -58,18 +59,27 @@ class JsonViewer:
         self.status = tk.StringVar(value="읽기 전용 · 파일과 프로젝트 규칙을 변경하지 않습니다.")
         self.selection_info = tk.StringVar(value="배열을 선택하면 정확한 항목 수를 확인할 수 있습니다.")
         toolbar = ttk.Frame(self.window, padding=12); toolbar.pack(fill="x")
-        ttk.Button(toolbar, text="JSON 파일 열기…", command=self.choose).pack(side="left")
+        ttk.Button(toolbar, text="폴더 열기…", command=self.choose_folder).pack(side="left")
+        ttk.Button(toolbar, text="파일 다중 선택…", command=self.choose).pack(side="left", padx=8)
         self.stop_button = ttk.Button(toolbar, text="읽기 중단", command=lambda: self.cancel.set(), state="disabled")
         self.stop_button.pack(side="left", padx=8)
         ttk.Label(self.window, textvariable=self.path, padding=(12, 0), wraplength=920).pack(fill="x")
         ttk.Label(self.window, textvariable=self.status, padding=12, wraplength=920).pack(fill="x")
         self.progress = ttk.Progressbar(self.window); self.progress.pack(fill="x", padx=12, pady=(0, 10))
-        body = ttk.Panedwindow(self.window, orient="horizontal"); body.pack(fill="both", expand=True, padx=12, pady=(0, 12))
+        workspace = ttk.Panedwindow(self.window, orient='horizontal'); workspace.pack(fill='both', expand=True, padx=12, pady=(0, 12))
+        self.browser = FileBrowser(workspace, self.load); workspace.add(self.browser, weight=1)
+        body = ttk.Panedwindow(workspace, orient="horizontal"); workspace.add(body, weight=3)
         left, right = ttk.Frame(body), ttk.Frame(body)
+        left.configure(width=320); left.pack_propagate(False)
+        right.configure(width=450); right.pack_propagate(False)
         body.add(left, weight=1); body.add(right, weight=1)
+        workspace.bind('<Configure>', lambda e: workspace.sashpos(0, int(e.width*.28)))
+        body.bind('<Configure>', lambda e: body.sashpos(0, int(e.width*.45)))
         self.tree = ttk.Treeview(left, columns=("type",), show="tree headings")
         self.tree.heading("#0", text="필드 / 배열 인덱스"); self.tree.heading("type", text="자료형 · 개수")
-        self.tree.column("#0", width=220); self.tree.column("type", width=180)
+        self.tree.column("#0", width=180, minwidth=70); self.tree.column("type", width=130, minwidth=80)
+        left.bind('<Configure>', lambda e: (self.tree.column('#0', width=max(70, int((e.width-18)*.55))),
+                                           self.tree.column('type', width=max(80, int((e.width-18)*.45)))))
         scroll = ttk.Scrollbar(left, command=self.tree.yview); scroll.pack(side="right", fill="y")
         self.tree.configure(yscrollcommand=scroll.set); self.tree.pack(fill="both", expand=True)
         ttk.Label(right, textvariable=self.selection_info, wraplength=440).pack(fill="x", padx=10, pady=(0, 8))
@@ -82,22 +92,27 @@ class JsonViewer:
         self.tree.bind("<Return>", self.load_more)
         self.window.bind("<Destroy>", self.destroyed)
         self.job = self.window.after(80, self.poll)
-        if initial:
-            self.load(Path(initial))
+        targets = list(paths) if paths else [initial] if initial else []
+        if targets: self.browser.set_inputs(targets, initial)
 
     def choose(self):
-        path = filedialog.askopenfilename(parent=self.window, title="구조를 확인할 JSON 파일",
-            filetypes=[("JSON", "*.json *.jsonl *.ndjson"), ("모든 파일", "*.*")])
-        if path:
-            self.load(Path(path))
+        paths = filedialog.askopenfilenames(parent=self.window, title="미리 볼 파일 다중 선택",
+            filetypes=[("JSON / CSV", "*.json *.jsonl *.ndjson *.csv"), ("모든 파일", "*.*")])
+        if paths: self.browser.set_inputs(paths, initial=paths[0], append=True)
+
+    def choose_folder(self):
+        path = filedialog.askdirectory(parent=self.window, title="JSON / CSV 파일이 있는 폴더")
+        if path: self.browser.set_inputs([path])
 
     def load(self, path):
+        path = Path(path)
         self.cancel.set()
         self.cancel = threading.Event()
         stop = self.cancel
         self.generation += 1
         generation = self.generation
         self.loading = True
+        self.progress.configure(value=0)
         self.path.set(str(path)); self.status.set("JSON을 읽고 있습니다.")
         self.stop_button.configure(state="normal")
         self.tree.delete(*self.tree.get_children())
@@ -115,7 +130,7 @@ class JsonViewer:
                     last = now
                     self.events.put((generation, "progress", (done, total, count)))
             try:
-                document = read_document(path, progress=progress, checkpoint=checkpoint)
+                document = read_document(path, fmt='auto', progress=progress, checkpoint=checkpoint)
                 checkpoint()
                 self.events.put((generation, "done", document))
             except Exception as exc:

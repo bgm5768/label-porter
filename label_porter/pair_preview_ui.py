@@ -38,8 +38,9 @@ class PairPreview(ttk.Frame):
         self.generation = 0
         self.cancel_event = threading.Event()
         self.queue = queue.Queue()
-        hint = Path(source_hint) if source_hint else None
-        self.source = tk.StringVar(value=str(hint) if hint and (configured or hint.is_file()) else "")
+        self.source_files = tuple(source_hint) if isinstance(source_hint, (list, tuple)) else ()
+        hint = Path(source_hint) if source_hint and not self.source_files else None
+        self.source = tk.StringVar(value=f"선택한 원본 {len(self.source_files):,}개 파일" if self.source_files else str(hint) if hint and (configured or hint.is_file()) else "")
         self.root_path = tk.StringVar(value=str(hint if hint.is_dir() else hint.parent) if hint else "")
         self.results = list(result_hints)
         self.result_label = tk.StringVar(value=self._result_label())
@@ -292,6 +293,7 @@ class PairPreview(ttk.Frame):
                                          initialdir=self.root_path.get() or None,
                                          filetypes=[("JSON", "*.json *.jsonl *.ndjson")])
         if path:
+            self.source_files = ()
             self.source.set(path)
             if not self.root_path.get() or not Path(path).resolve().is_relative_to(Path(self.root_path.get()).resolve()):
                 self.root_path.set(str(Path(path).parent))
@@ -361,8 +363,8 @@ class PairPreview(ttk.Frame):
         self._invalidate(cache=refresh)
         self.cancel_event = cancel = threading.Event()
         generation, cached = self.generation, self.cache
-        source, results = self.source.get(), list(self.results)
-        root = self.root_path.get() or str(Path(source).parent)
+        source, results = self.source_files or self.source.get(), list(self.results)
+        root = self.root_path.get() or ("" if self.source_files else str(Path(source).parent))
         self.status.set("원본과 보완 결과를 읽고 KEY를 확인하고 있습니다…")
         self._set_busy(True)
         def send(kind, value):

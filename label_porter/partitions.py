@@ -73,7 +73,7 @@ def _copy_with_hash(source, destination, checkpoint):
 def export_partitions(run_dir: Path, source_base: Path, selected_files, record_positions,
                       changed_positions, file_manifest, spec, summary, manifest,
                       preview, checkpoint, progress, examine_positions=None, examine_files=None, split_output=True, examine_categories=None,
-                      original_source=None):
+                      original_source=None, original_files=None):
     """A record goes to exactly one group; unparseable files remain unclassified."""
     from .examine import label_path
     examine_positions, examine_files = examine_positions or {}, examine_files or set()
@@ -124,6 +124,7 @@ def export_partitions(run_dir: Path, source_base: Path, selected_files, record_p
                 file_counts[group] += 1
                 destination = run_dir / output_relative
                 input_base = original_source if original_source is not None and group in ("examine", "unclassified") else source_base
+                input_path = original_files[relative] if original_files and (preview or group in ("examine", "unclassified")) else input_base / relative
                 file_entry = file_manifest.get(relative, {})
                 expected_hash = file_entry.get("source_sha256") if input_base == original_source else file_entry.get("output_sha256", file_entry.get("source_sha256"))
                 whole_file = positions is None or len(members) == len(positions)
@@ -132,7 +133,7 @@ def export_partitions(run_dir: Path, source_base: Path, selected_files, record_p
                 else:
                     document = documents.get(input_base)
                     if document is None:
-                        document = read_document(input_base / relative, spec.get("encoding", "utf-8-sig"), "json")
+                        document = read_document(input_path, spec.get("encoding", "utf-8-sig"), "json")
                         documents[input_base] = document
                         if document.sha256 != expected_hash:
                             raise DataError(f"분리 저장 중 파일 내용이 달라졌습니다: {relative}")
@@ -143,7 +144,7 @@ def export_partitions(run_dir: Path, source_base: Path, selected_files, record_p
                          "path": output_relative.as_posix(), "records": len(members) if members is not None else None}
                 if not preview:
                     if whole_file:
-                        digest = _copy_with_hash(input_base / relative, destination, checkpoint)
+                        digest = _copy_with_hash(input_path, destination, checkpoint)
                         if digest != expected_hash:
                             raise DataError(f"분리 복사본 해시가 일치하지 않습니다: {relative}")
                     else:

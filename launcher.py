@@ -23,6 +23,7 @@ def self_test(output):
         assert len(app.profiles) == 4
         assert len(app.tabs.tabs()) == 3
         assert len(app.steps.tabs()) == 4
+        assert [b['text'] for b in app.source_panel.buttons] == [b['text'] for b in app.result_panel.buttons]
         assert str(app.steps.tab(1, "state")) == "disabled"
         assert "AI 규칙 작성 가이드" in [app.tabs.tab(tab, "text") for tab in app.tabs.tabs()]
         assert "schema_version" in app.ai_guide_text
@@ -118,6 +119,18 @@ def self_test(output):
             viewer.display(Document([[{"items": [1, 2, 3]}]], "self-test"))
             assert "최상위 항목 1개" in viewer.status.get()
             viewer.window.destroy()
+            viewer = JsonViewer(root, paths=[many])
+            viewer.window.withdraw()
+            deadline = time.monotonic() + 10
+            while (len(viewer.browser.paths) != 2 or not viewer.values or viewer.loading) and time.monotonic() < deadline:
+                root.update(); time.sleep(.01)
+            assert len(viewer.browser.paths) == 2 and viewer.values and not viewer.loading
+            viewer.browser.query.set('b.json'); viewer.browser.filter()
+            assert len(viewer.browser.filtered) == 1
+            viewer.window.destroy()
+            chosen = run([many/'a.json'], [many_result], base/'selected_output', file_profile)
+            assert chosen.summary['source_records'] == 1 and chosen.summary['status'] != 'failed'
+            assert (chosen.directory/'data/a.json').is_file() and not (chosen.directory/'data/b.json').exists()
             from label_porter.rules import apply_record
             from label_porter.config import validate_config
             rebuild_profile = validate_config({

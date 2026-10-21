@@ -19,6 +19,7 @@ from .reports import ISSUES, Reports
 from .partitions import export_partitions
 from .rules import ReviewRequired, apply_record, expression
 from .storage import now, output_session
+from .input_files import source_layout
 
 
 class Cancelled(Exception):
@@ -75,36 +76,36 @@ def _inventory(source: Path):
     return sorted(files, key=lambda path: path.as_posix())
 
 
-def run(source_directory: Path | str, result_files: list[Path | str], output_directory: Path | str,
+def run(source_directory: Path | str | list[Path | str] | tuple, result_files: list[Path | str], output_directory: Path | str,
         config: dict, preview=False, progress: Callable[[dict], None] | None = None,
         cancel: threading.Event | None = None, split_output=True) -> RunResult:
     config = copy.deepcopy(validate_config(config))
-    source = Path(source_directory).expanduser().resolve()
+    layout = source_layout(source_directory, config["source"].get("glob", "**/*.json"))
+    source = layout.root or next(iter(layout.files.values()), Path.cwd()).parent
     output = Path(output_directory).expanduser().resolve()
-    if not source.is_dir():
-        raise DataError("원본 폴더를 찾을 수 없습니다.")
-    if output == source or output.is_relative_to(source):
+    if layout.directory and (output == source or output.is_relative_to(source)):
         raise DataError("결과 저장 위치는 원본 폴더 밖으로 지정해야 합니다.")
     result_paths = [Path(path).expanduser().resolve() for path in result_files]
     if not result_paths or any(not path.is_file() for path in result_paths):
         raise DataError("존재하는 작업 결과 파일을 하나 이상 선택하세요.")
     if len(set(result_paths)) != len(result_paths):
         raise DataError("같은 결과 파일이 두 번 선택되었습니다.")
-    inventory = _inventory(source)
-    selected = {path.relative_to(source) for path in source.glob(config["source"].get("glob", "**/*.json")) if path.is_file()}
+    inventory = _inventory(source) if layout.directory else sorted(layout.files)
+    selected = set(layout.files)
+    originals = {relative: source / relative for relative in inventory} if layout.directory else layout.files
     if not selected:
         raise DataError("source.glob과 일치하는 원본 JSON 파일이 없습니다.")
     if not selected.issubset(set(inventory)):
         raise DataError("원본 선택 범위를 확인할 수 없습니다.")
-    if any(path.is_relative_to(source) and path.relative_to(source) in selected for path in result_paths):
+    if set(layout.files.values()).intersection(result_paths):
         raise DataError("작업 결과 파일이 원본 선택 범위에도 포함되었습니다. 원본 폴더/패턴을 분리하세요.")
-    with output_session(output, preview, source, result_paths) as run_dir:
+    with output_session(output, preview, source, [*result_paths, *originals.values()]) as run_dir:
         return _execute_run(run_dir, source, result_paths, inventory, selected, config,
-                            preview, progress, cancel, split_output)
+                            preview, progress, cancel, split_output, originals, layout.directory)
 
 
 def _execute_run(run_dir, source, result_paths, inventory, selected, config,
-                 preview, progress, cancel, split_output):
+                 preview, progress, cancel, split_output, originals, directory_mode):
     data_dir = run_dir / "data"
     report = Reports(run_dir / "reports", split_output=split_output, preview=preview, result_spec=config["result"])
     summary = {"version": 4, "profile": config["name"], "preview": bool(preview), "status": "running",
@@ -112,7 +113,8 @@ def _execute_run(run_dir, source, result_paths, inventory, selected, config,
                "split_output": bool(split_output), "partition_status": "pending" if split_output else "disabled",
                "source_files": len(inventory), "label_files": len(selected), "source_records": 0, "result_records": 0}
     manifest = {"source_directory": str(source), "preview": bool(preview), "result_files": [], "files": [],
-                "examine_original_inputs": True}
+                "examine_original_inputs": True, "source_mode": "folder" if directory_mode else "files",
+                "source_inputs": {rel.as_posix(): str(path) for rel, path in originals.items()}}
     atomic_text(run_dir / "profile.json", json.dumps(config, ensure_ascii=False, indent=2))
     atomic_text(run_dir / "run_status.json", json.dumps(summary, ensure_ascii=False, indent=2))
 
@@ -189,12 +191,12 @@ def _execute_run(run_dir, source, result_paths, inventory, selected, config,
         if not preview:
             emit("copy", f"원본 파일 {len(inventory):,}개를 새 폴더에 복사합니다.")
             data_dir.mkdir()
-            for current, directories, _ in os.walk(source):
+            for current, directories, _ in os.walk(source) if directory_mode else []:
                 for name in directories:
                     (data_dir / (Path(current) / name).relative_to(source)).mkdir(parents=True, exist_ok=True)
             for index, relative in enumerate(inventory, 1):
                 checkpoint()
-                original, destination = source / relative, data_dir / relative
+                original, destination = originals[relative], data_dir / relative
                 destination.parent.mkdir(parents=True, exist_ok=True)
                 digest = hashlib.sha256()
                 with original.open("rb") as src, destination.open("xb") as dst:
@@ -211,11 +213,13 @@ def _execute_run(run_dir, source, result_paths, inventory, selected, config,
                 if index % 100 == 0 or index == len(inventory):
                     emit("copy", f"원본 복사 {index:,}/{len(inventory):,}", index, len(inventory))
         base = source if preview else data_dir
+        def input_path(relative):
+            return originals[relative] if preview else data_dir / relative
         emit("index", "원본 레코드의 연결키를 검사합니다.")
         for index, relative in enumerate(sorted(selected), 1):
             checkpoint()
             try:
-                document = read_document(base / relative, config["source"].get("encoding", "utf-8-sig"), "json")
+                document = read_document(input_path(relative), config["source"].get("encoding", "utf-8-sig"), "json")
                 found = list(records(document, config["source"]))
                 record_positions[relative] = [(doc_index, pointer) for doc_index, pointer, _ in found]
                 report.source_input(relative.as_posix(), record_positions[relative])
@@ -239,14 +243,14 @@ def _execute_run(run_dir, source, result_paths, inventory, selected, config,
                         report.record("source", "invalid_source", source_file=relative.as_posix(), record_path=f"doc:{doc_index}{pointer}", reason=str(exc), evidence={"source_record": row, "final_record": row})
             except (OSError, UnicodeError, ValueError, RecursionError) as exc:
                 report.record("source_file", "invalid_source", source_file=relative.as_posix(), reason=str(exc),
-                              evidence=_unreadable_evidence(base / relative, config["source"].get("encoding", "utf-8-sig")))
+                              evidence=_unreadable_evidence(input_path(relative), config["source"].get("encoding", "utf-8-sig")))
             if index % 100 == 0 or index == len(selected):
                 emit("index", f"원본 검사 {index:,}/{len(selected):,}", index, len(selected))
 
         def source_evidence(key):
             snapshots = []
             for relative, doc_index, pointer, value, _ in source_index.get(key, []):
-                doc = read_document(base / relative, config["source"].get("encoding", "utf-8-sig"), "json")
+                doc = read_document(input_path(relative), config["source"].get("encoding", "utf-8-sig"), "json")
                 snapshots.append({"file": relative.as_posix(), "record_path": f"doc:{doc_index}{pointer}",
                                   "key": value, "record": get_pointer(doc.docs[doc_index], pointer)})
             return snapshots
@@ -263,7 +267,7 @@ def _execute_run(run_dir, source, result_paths, inventory, selected, config,
                 matches = result_index.get(key, [])
                 detail = {"scope": "source", "source_file": relative.as_posix(), "record_path": source_path, "key": value}
                 if document is None:
-                    document = read_document(base / relative, config["source"].get("encoding", "utf-8-sig"), "json")
+                    document = read_document(input_path(relative), config["source"].get("encoding", "utf-8-sig"), "json")
                     if document.sha256 != manifest_by_file[relative]["source_sha256"]:
                         raise DataError(f"검사 중 원본/복사본이 변경되었습니다: {relative}")
                 original = get_pointer(document.docs[doc_index], pointer)
@@ -336,7 +340,8 @@ def _execute_run(run_dir, source, result_paths, inventory, selected, config,
         emit("partition", "검토 대상은 examine으로, 정상 데이터는 처리 상태별로 분리합니다.")
         export_partitions(run_dir, base, selected, record_positions, changed_positions,
                           manifest_by_file, config["source"], summary, manifest, preview, checkpoint, emit,
-                          report.examine_positions, report.examine_files, split_output, report.examine_categories, original_source=source)
+                          report.examine_positions, report.examine_files, split_output, report.examine_categories,
+                          original_source=source, original_files=originals)
         report.result_archive.export(run_dir, preview, checkpoint, emit)
         summary["status"] = "completed_with_issues" if any(report.counts[key] for key in ISSUES) or report.advisory_rows or report.counts["no_result"] else "completed"
     except Cancelled as exc:

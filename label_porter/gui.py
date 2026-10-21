@@ -11,6 +11,8 @@ from pathlib import Path
 from tkinter import filedialog, font, scrolledtext, ttk
 
 from . import __version__
+from .data_input_ui import DataInputPanel
+from .input_files import source_paths
 from .config import load_config, validate_config
 from .rule_review import RuleReview, profile_connections
 from .reports import STATUS, ISSUES
@@ -37,6 +39,8 @@ class App(Workflow):
         self.builder = None
         self.preloaded_preview = None
         self.last_run = self.last_summary = None
+        self.source_files = []
+        self.result_folder = ""
         self.result_paths = []
         self.current_step, self.route = 0, "workflow"
         self.help_return = None
@@ -48,7 +52,8 @@ class App(Workflow):
         self.rule_summary = tk.StringVar(value="아직 프로젝트 규칙이 없습니다.")
         self.rule_title = tk.StringVar(value="규칙을 준비해 주세요")
         self.run_summary, self.profile_name, self.description = tk.StringVar(), tk.StringVar(), tk.StringVar()
-        self.input_hint = tk.StringVar(value="실제로 처리할 전체 원본 폴더와 결과 파일을 지정하세요.")
+        self.input_hint = tk.StringVar(value="양쪽 모두 폴더 또는 파일 다중 선택이 가능합니다. 폴더를 선택하면 기존 파일 선택을 대신합니다.")
+        self.source_count = tk.StringVar(value="선택한 원본 없음")
         self.result_count = tk.StringVar(value="선택한 결과 파일 없음")
         self.profiles = {c["name"]: (p, c) for p in sorted((resource_directory()/"profiles").glob("*.json")) for c in [load_config(p)]}
         self.settings_path = Path(os.environ.get("APPDATA", str(Path.home()))) / "LabelPorter" / "settings.json"
@@ -148,26 +153,21 @@ class App(Workflow):
         self.save_rule_button = ttk.Button(group, text="규칙 내보내기", command=self._save_profile, state="disabled")
         self.save_rule_button.pack(anchor="w", pady=(14, 0))
         group = card(project, "이후 진행 순서")
-        for title, explanation in (("02  데이터 선택", "원본 폴더 · 플랫폼/보완 파일 · 저장 위치를 한 번 선택합니다."),
+        for title, explanation in (("02  데이터 선택", "원본과 보완 데이터의 폴더 또는 파일 · 저장 위치를 선택합니다."),
                                    ("03  연결과 프리뷰 확인", "같은 KEY의 데이터 예시를 자동으로 찾아 연결과 실제 값을 보여줍니다."),
                                    ("04  전체 검증과 저장", "전체 처리 결과서를 확인한 뒤 원본을 보존하는 복사본을 저장합니다.")):
             ttk.Label(group, text=title, style="CardTitle.TLabel").pack(anchor="w", pady=(10, 3))
             ttk.Label(group, text=explanation, style="CardMuted.TLabel", wraplength=700).pack(fill="x")
         ttk.Label(project, text="규칙 작성이 필요하면 왼쪽 아래 ‘사용 방법 → AI 규칙 작성 가이드’를 이용하세요. 불러온 규칙은 읽기 전용으로 확인합니다.", style="Muted.TLabel", wraplength=720).pack(fill="x", pady=4)
         ttk.Label(inputs, textvariable=self.input_hint, wraplength=760, foreground="#245eb7").pack(fill="x", pady=(0, 14))
-        group = card(inputs, "1. 보완 전 원본 라벨 폴더", "여러 개별 JSON 또는 여러 건을 담은 통합 JSON 모두 가능합니다. 하위 폴더도 포함합니다.")
-        self._path_row(group, self.source, self._choose_source)
-        group = card(inputs, "2. 플랫폼 결과 또는 별도 보완 데이터", "같은 프로젝트의 보완·검수 결과 JSON / CSV를 선택하세요.")
-        ttk.Label(group, textvariable=self.result_count, style="CardMuted.TLabel").pack(anchor="w", pady=(0, 6))
-        row = ttk.Frame(group, style="Card.TFrame"); row.pack(fill="x")
-        tools = ttk.Frame(row, style="Card.TFrame"); tools.pack(side="right", padx=(10, 0))
-        ttk.Button(tools, text="파일 추가", command=self._choose_results).pack(fill="x")
-        ttk.Button(tools, text="선택 제거", command=self._remove_results).pack(fill="x", pady=(4, 0))
-        ttk.Button(tools, text="JSON 항목 수 보기", command=self._json_viewer).pack(fill="x", pady=(4, 0))
-        self.result_list = tk.Listbox(row, height=4, selectmode="extended", relief="flat", highlightthickness=1,
-                                     highlightbackground="#dce3ee", background="#f8faff", foreground=INK, selectbackground="#dbeafe", selectforeground=INK)
-        scroll = ttk.Scrollbar(row, command=self.result_list.yview); scroll.pack(side="right", fill="y")
-        self.result_list.configure(yscrollcommand=scroll.set); self.result_list.pack(fill="x", expand=True)
+        group = card(inputs, "1. 보완 전 원본 라벨 데이터", "JSON / JSONL / NDJSON · 개별 파일과 통합 배열 모두 지원합니다.")
+        self.source_panel = DataInputPanel(group, self.source_count, self._choose_source, self._choose_source_files,
+                                           self._remove_source, lambda: self._json_viewer('source'))
+        self.source_list = self.source_panel.list
+        group = card(inputs, "2. 플랫폼 결과 또는 별도 보완 데이터", "JSON / JSONL / NDJSON / CSV · 원본에 반영할 보완 결과를 선택하세요.")
+        self.result_panel = DataInputPanel(group, self.result_count, self._choose_result_folder, self._choose_results,
+                                           self._remove_results, lambda: self._json_viewer('result'))
+        self.result_list = self.result_panel.list
         group = card(inputs, "3. 새 결과를 저장할 폴더", "기본값은 프로그램 폴더의 results입니다. 직접 선택한 경로에는 이름을 덧붙이지 않습니다. 그 아래 날짜 / 순번으로 실행별 결과를 보관합니다.")
         self._path_row(group, self.output, self._choose_output)
         self.default_output_button = ttk.Button(group, text="기본 위치", command=self._reset_output)
@@ -219,13 +219,23 @@ class App(Workflow):
         table.pack(fill="x", pady=12)
         return table
 
-    def _json_viewer(self):
+    def _json_viewer(self, side=None):
         from .json_viewer import JsonViewer
         builder = self.builder if self.route == "builder" else None
-        selected = (builder.result_list if builder else self.result_list).curselection()
-        paths = builder.results if builder else self.result_paths
-        initial = paths[selected[0] if selected and selected[0] < len(paths) else 0] if paths else None
-        JsonViewer(self.root, initial)
+        if side == 'source':
+            paths = [self.source.get()] if self.source.get() else list(self.source_files)
+            chosen = self.source_list.curselection()
+        elif side == 'result':
+            paths = [self.result_folder] if self.result_folder else list(self.result_paths)
+            chosen = self.result_list.curselection()
+        elif builder:
+            paths = [builder.source.get(), *builder.results]
+            chosen = ()
+        else:
+            paths = ([self.source.get()] if self.source.get() else list(self.source_files)) + ([self.result_folder] if self.result_folder else list(self.result_paths))
+            chosen = ()
+        initial = paths[chosen[0]] if chosen and chosen[0] < len(paths) else None
+        self.json_viewer = JsonViewer(self.root, initial=initial, paths=[p for p in paths if p])
 
     @staticmethod
     def _path_row(parent, variable, command):
@@ -350,7 +360,7 @@ class App(Workflow):
         self.route, self.current_step = "builder", 0
         if self.builder is None:
             self.builder = EasyRules(self.builder_host, self._builder_changed, self._finish_builder,
-                                     lambda: self._show_step(0), self.source.get(), self.result_paths)
+                                     lambda: self._show_step(0), self.source.get(), self._result_files())
             self.builder.pack(fill="both", expand=True)
         self.builder_host.pack(fill="both", expand=True)
         self._builder_changed()
@@ -369,7 +379,8 @@ class App(Workflow):
     def _finish_builder(self, profile, inputs, data):
         self._close_mapping()
         self._set_config(profile)
-        self.source.set(inputs.source)
+        self.source_files = []; self.result_folder = ""
+        self.source.set(inputs.source); self._render_sources()
         self.result_paths = list(inputs.result_files); self._render_results()
         self.rule_file.set("간편 작성 규칙 · ‘규칙 내보내기’로 JSON 파일 저장 가능")
         self.preloaded_preview = (self._mapping_inputs(), data)
@@ -436,7 +447,7 @@ class App(Workflow):
         try:
             self._summarize_rule(self._get_config()); self.rule_ready = True
             self.steps.tab(1, state="normal"); self._show_step(1)
-            self.status.set("규칙을 불러왔습니다. 원본 폴더·보완 파일·저장 위치를 선택하세요."); self._save_settings()
+            self.status.set("원본·보완 데이터를 폴더 또는 파일로 선택하고 저장 위치를 확인하세요."); self._save_settings()
         except (ValueError, TypeError, KeyError) as exc: self.status.set(f"규칙 확인: {exc}")
 
     def _advance_review(self):
@@ -446,9 +457,9 @@ class App(Workflow):
         try:
             self._check_inputs()
             pattern = self._get_config()["source"].get("glob", "**/*.json")
-            if not any(p.is_file() for p in Path(self.source.get()).glob(pattern)):
+            if not source_paths(self._source_input(), pattern):
                 raise ValueError(f"원본 폴더에서 대상 패턴 ‘{pattern}’에 맞는 파일을 찾지 못했습니다.")
-            self.run_summary.set(f"규칙  {self._get_config()['name']}\n원본  {self.source.get()}\n결과  {len(self.result_paths):,}개 파일\n저장  {self.output.get()}\n분리  {'변경 / 미변경 / examine' if self.split_output.get() else '전체 복사본 + examine'}")
+            self.run_summary.set(f"규칙  {self._get_config()['name']}\n원본  {self._source_label()}\n보완  {len(self._result_files()):,}개 파일\n저장  {self.output.get()}\n분리  {'변경 / 미변경 / examine' if self.split_output.get() else '전체 복사본 + examine'}")
             self.steps.tab(3, state="normal"); self._show_step(3)
             self.status.set("전체 데이터 검증 후 집계와 보고서를 확인하세요."); self._save_settings()
         except (ValueError, OSError) as exc: self.status.set(f"입력 확인: {exc}")
@@ -462,7 +473,8 @@ class App(Workflow):
                 self._close_builder()
                 self.preloaded_preview = None
                 self._close_mapping()
-                self.source.set(""); self.result_paths = []; self._render_results()
+                self.source_files = []; self.result_folder = ""
+                self.source.set(""); self.result_paths = []; self._render_sources(); self._render_results()
                 if not self.output.get().strip(): self.output.set(str(default_output_directory()))
                 self._set_config(config)
                 self.rule_file.set(str(Path(path)))
@@ -481,7 +493,7 @@ class App(Workflow):
         except (OSError, ValueError, TypeError, KeyError) as exc: self.status.set(f"규칙 저장: {exc}")
 
     def _render_results(self):
-        super()._render_results(); self.result_count.set(f"{len(self.result_paths):,}개 결과 파일 선택")
+        super()._render_results()
 
     def _wizard(self):
         if self.running: return
@@ -489,7 +501,9 @@ class App(Workflow):
         try:
             config = self._get_config()
             self._check_inputs()
-            if not reuse and not any(p.is_file() for p in Path(self.source.get()).glob(config["source"].get("glob", "**/*.json"))):
+            if reuse and self.mapping.preview.results != self._result_files():
+                reuse = False
+            if not reuse and not source_paths(self._source_input(), config["source"].get("glob", "**/*.json")):
                 raise ValueError("규칙의 파일 패턴에 맞는 원본 JSON이 없습니다.")
         except (OSError, ValueError, TypeError, KeyError) as exc:
             if self.rule_ready: self._show_step(1)
@@ -509,11 +523,11 @@ class App(Workflow):
             preloaded = self.preloaded_preview[1] if self.preloaded_preview and self.preloaded_preview[0] == self.mapping_inputs else None
             self.preloaded_preview = None
             self.mapping = RuleReview(self.mapping_host, config, self._finish_mapping,
-                                      lambda: self._show_step(1), source_hint=self.source.get(),
-                                      result_hints=self.result_paths, configured=True, external_navigation=True, preloaded=preloaded)
+                                      lambda: self._show_step(1), source_hint=self._source_input(),
+                                      result_hints=self._result_files(), configured=True, external_navigation=True, preloaded=preloaded)
 
     def _mapping_inputs(self):
-        return (self._config_text, self.source.get(), tuple(self.result_paths))
+        return (self._config_text, self._source_input(), tuple(self.result_paths), self.result_folder)
 
     def _finish_mapping(self):
         self.connection_confirmed = True
@@ -521,8 +535,8 @@ class App(Workflow):
 
     def _fingerprint(self):
         base = super()._fingerprint()
-        source = Path(self.source.get()).resolve()
-        stats = [(p.relative_to(source).as_posix(), p.stat().st_size, p.stat().st_mtime_ns) for p in sorted(source.rglob("*")) if p.is_file()]
+        files = [Path(p) for p in self.source_files] if self.source_files else sorted(Path(self.source.get()).resolve().rglob("*"))
+        stats = [(str(p), p.stat().st_size, p.stat().st_mtime_ns) for p in files if p.is_file()]
         return json.dumps([base, stats], ensure_ascii=False)
 
     def _start(self, preview):
@@ -589,7 +603,9 @@ class App(Workflow):
     def _load_settings(self):
         try:
             s = json.loads(self.settings_path.read_text(encoding="utf-8"))
-            self.source.set(s.get("source", ""))
+            self.source_files = s.get("source_files", [])
+            self.result_folder = s.get("result_folder", "")
+            self.source.set(s.get("source", "")); self._render_sources()
             # Legacy settings have no provenance: preserve their path rather than guess
             # whether a directory named '포팅결과' was explicitly selected.
             mode = "default" if s.get("output_mode") == "default" or not (s.get("output") or "").strip() else "custom"
@@ -605,7 +621,7 @@ class App(Workflow):
 
     def _save_settings(self):
         try:
-            s = {"source": self.source.get(), "output": self.output.get(), "output_mode": self.output_mode, "results": self.result_paths, "split_output": self.split_output.get(),
+            s = {"source": self.source.get(), "source_files": self.source_files, "result_folder": self.result_folder, "output": self.output.get(), "output_mode": self.output_mode, "results": self.result_paths, "split_output": self.split_output.get(),
                  "rule_file": self.rule_file.get(), "config": self._get_config() if self._config_text else None}
             self.settings_path.parent.mkdir(parents=True, exist_ok=True)
             temp = self.settings_path.with_suffix(".tmp"); temp.write_text(json.dumps(s, ensure_ascii=False), encoding="utf-8"); os.replace(temp, self.settings_path)

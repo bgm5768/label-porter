@@ -83,6 +83,49 @@ class WorkflowUiTests(unittest.TestCase):
         return {"schema_version": 1, "name": "프로젝트", "source": {"key": "/id"}, "result": {"key": "/ref"},
                 "rules": [{"kind": "field", "from": "/new", "to": "/label"}]}
 
+    def test_symmetric_inputs_accept_multiple_files_or_folder_and_preview_both(self):
+        with patch.object(App, '_load_settings'), patch.object(App, '_save_settings'):
+            app = App(self.root); app._set_config(self.config())
+            self.assertEqual([b['text'] for b in app.source_panel.buttons], [b['text'] for b in app.result_panel.buttons])
+            with patch('label_porter.workflow.filedialog.askopenfilenames', return_value=[str(self.sf), str(self.sf)]):
+                app._choose_source_files()
+            self.assertEqual(app.source_files, [str(self.sf)])
+            with patch('label_porter.workflow.filedialog.askdirectory', return_value=str(self.source)):
+                app._choose_source()
+            self.assertEqual(app.source_files, [])
+            self.assertEqual(app.source.get(), str(self.source))
+            with patch('label_porter.workflow.filedialog.askopenfilenames', return_value=[str(self.sf)]):
+                app._choose_source_files()
+            self.assertEqual(app.source.get(), '')
+            folder = self.base/'corrected'; folder.mkdir()
+            incoming = folder/'data.json'; incoming.write_bytes(self.rf.read_bytes())
+            with patch('label_porter.workflow.filedialog.askdirectory', return_value=str(folder)):
+                app._choose_result_folder()
+            self.assertEqual(app._result_files(), [str(incoming)])
+            with patch('label_porter.json_viewer.JsonViewer') as viewer:
+                app._json_viewer('source')
+                self.assertEqual(viewer.call_args.kwargs['paths'], [str(self.sf)])
+                app._json_viewer('result')
+                self.assertEqual(viewer.call_args.kwargs['paths'], [str(folder)])
+            app.output.set(str(self.base/'out'))
+            self.confirm_connections(app)
+            self.assertEqual(app.mapping.preview.source_files, (str(self.sf),))
+            app._start(True); self.until(lambda: not app.running)
+            app._start(False); self.until(lambda: not app.running)
+            self.assertEqual(json.loads((app.last_run/'data/one.json').read_text(encoding='utf-8'))['label'], 'new')
+
+    def test_file_selections_and_result_folder_restore_from_settings(self):
+        with patch.object(App, '_load_settings'):
+            app = App(self.root)
+        app.settings_path = self.base/'settings.json'
+        app._set_config(self.config()); app.source_files = [str(self.sf)]; app.result_folder = str(self.base)
+        app._save_settings()
+        app.source_files = []; app.result_folder = ''
+        app._load_settings()
+        self.assertEqual(app.source_files, [str(self.sf)])
+        self.assertEqual(app.result_folder, str(self.base))
+        self.assertEqual(app.source_list.get(0), str(self.sf))
+
     def configure_inputs(self, app):
         app.source.set(str(self.source)); app.result_paths = [str(self.rf)]
         app.output.set(str(self.base / "out")); app._render_results()

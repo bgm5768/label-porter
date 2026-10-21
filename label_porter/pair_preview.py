@@ -12,6 +12,7 @@ from .config import validate_config
 from .diagnostics import observed
 from .formats import MISSING, DataError, canonical_key, get_pointer, read_document, records
 from .rules import apply_record, expression
+from .input_files import source_paths, source_layout
 
 ERRORS = (ValueError, TypeError, KeyError, IndexError, OverflowError)
 ROW_LIMIT = 200
@@ -35,23 +36,6 @@ def metadata(path, *, result=False, number="", root=None):
             "result_file": str(path) if result else "", "result_row": number if result else ""}
 
 
-def source_paths(source, pattern="**/*.json", checkpoint=None):
-    source = Path(source).expanduser().resolve()
-    directory = source.is_dir()
-    paths, parents = [], {}
-    for path in source.glob(pattern) if directory else [source]:
-        if checkpoint: checkpoint()
-        if not path.is_file(): continue
-        if directory:
-            # Resolve each parent once; thousands of sibling files share it.
-            if path.parent not in parents:
-                parents[path.parent] = path.parent.resolve().is_relative_to(source)
-            if path.is_symlink() or not parents[path.parent]:
-                raise DataError("원본 폴더 밖의 파일을 예시로 사용할 수 없습니다.")
-        paths.append(path)
-    return sorted(paths)
-
-
 def _file_stamp(paths, root, checkpoint=None):
     entries = []
     for path in paths:
@@ -63,8 +47,9 @@ def _file_stamp(paths, root, checkpoint=None):
 
 
 def fingerprint(source, results, root="", pattern="**/*.json", checkpoint=None):
-    paths = [*source_paths(source, pattern, checkpoint), *[Path(p).expanduser().resolve() for p in results]]
-    return _file_stamp(paths, root, checkpoint)
+    layout = source_layout(source, pattern, root, checkpoint)
+    paths = [*layout.files.values(), *[Path(p).expanduser().resolve() for p in results]]
+    return _file_stamp(paths, layout.root, checkpoint)
 
 
 def matching_indices(data):
@@ -90,7 +75,6 @@ class PreviewData:
 def load_preview(profile, source, results, root="", progress=None, cancel=None):
     """Index all selected inputs; ambiguous keys are never resolved by row order."""
     profile = copy.deepcopy(validate_config(profile))
-    source = Path(source).expanduser().resolve()
     paths = [Path(path).expanduser().resolve() for path in results]
     def checkpoint():
         if cancel and cancel():
@@ -100,14 +84,13 @@ def load_preview(profile, source, results, root="", progress=None, cancel=None):
         raise DataError("플랫폼 결과 또는 보완 데이터 파일을 선택하세요.")
     if len(set(paths)) != len(paths):
         raise DataError("같은 결과 파일을 두 번 선택했습니다.")
-    sources = source_paths(source, profile["source"].get("glob", "**/*.json"), checkpoint)
+    layout = source_layout(source, profile["source"].get("glob", "**/*.json"), root, checkpoint)
+    sources = list(layout.files.values())
     if not sources:
         raise DataError("규칙의 파일 패턴에 맞는 원본 JSON이 없습니다.")
     if set(sources).intersection(paths):
         raise DataError("원본과 보완 결과는 서로 다른 파일을 선택하세요.")
-    root = Path(root).expanduser().resolve() if root else source if source.is_dir() else source.parent
-    if not root.is_dir() or not source.is_relative_to(root):
-        raise DataError("원본 기준 폴더 안의 JSON 파일을 선택하세요.")
+    root = layout.root
     stamp = _file_stamp([*sources, *paths], root, checkpoint)
     last_progress = [0.0]
     def emit(message):
@@ -121,13 +104,13 @@ def load_preview(profile, source, results, root="", progress=None, cancel=None):
         return read_document(path, spec.get("encoding", "utf-8-sig"), spec.get("format", "json"),
                              spec.get("csv_json_columns", []), progress=report, checkpoint=checkpoint)
     originals, source_keys, source_counts = [], [], Counter()
-    for file_number, source_file in enumerate(sources, 1):
-        source_meta = metadata(source_file, root=root)
+    for file_number, (relative, source_file) in enumerate(layout.files.items(), 1):
+        source_meta = metadata(relative)
         for doc, pointer, row in records(read(source_file, profile["source"], f"원본 {file_number:,}/{len(sources):,}개"), profile["source"]):
             checkpoint()
             if not isinstance(row, dict):
                 raise DataError("원본 레코드가 JSON 객체가 아닙니다.")
-            originals.append((row, source_meta, f"{source_file.relative_to(root).as_posix()} · doc:{doc}{pointer}"))
+            originals.append((row, source_meta, f"{relative.as_posix()} · doc:{doc}{pointer}"))
             try:
                 key = canonical_key(expression(profile["source"]["key"], context(row, source_meta)))
                 source_counts[key] += 1
