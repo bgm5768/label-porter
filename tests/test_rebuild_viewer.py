@@ -120,9 +120,9 @@ class RebuildTests(unittest.TestCase):
             self.assertEqual(detail["final_record"], actual)
             self.assertTrue(detail["applied_with_advisories"])
             self.assertEqual(outcome.summary["partition_records"]["examine"], 1)
-            archived = outcome.directory / "examine/review/labels/a.json/00000001.json"
+            archived = outcome.directory / "examine/review/원본/a.json"
             self.assertEqual(archived.read_bytes(), path.read_bytes())
-            incoming_files = list((outcome.directory / "examine/review/results").rglob("*.json"))
+            incoming_files = list((outcome.directory / "examine/review/보안").rglob("*.json"))
             self.assertEqual(len(incoming_files), 1)
             self.assertEqual(incoming_files[0].read_bytes(), result.read_bytes())
             from scripts.verify_run import verify

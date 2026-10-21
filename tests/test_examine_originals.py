@@ -43,8 +43,8 @@ class ExamineOriginalTests(unittest.TestCase):
         original_bytes, result_bytes = path.read_bytes(), self.result.read_bytes()
         folder = self.execute(split_output=False)
         for category, source_key, result_key in (("review", "a", "a"), ("excluded", "b", "b"), ("unmatched", "c", "z")):
-            sources = list((folder / "examine" / category / "labels").rglob("*.json"))
-            results = list((folder / "examine" / category / "results").rglob("*.json"))
+            sources = list((folder / "examine" / category / "원본").rglob("*.json"))
+            results = [p for p in (folder / "examine" / category / "보안").rglob("*.json") if p.is_file()]
             sources = [p for p in sources if p.is_file()]
             self.assertEqual((len(sources), len(results)), (1, 1))
             saved_source = json.loads(sources[0].read_text(encoding="utf-8"))
@@ -68,8 +68,8 @@ class ExamineOriginalTests(unittest.TestCase):
         self.write(self.source / "all.json", {"payload": {"items": rows}})
         self.write(self.result, {"export": {"rows": incoming}})
         folder = self.execute()
-        originals = [p for p in (folder / "examine/review/labels").rglob("*.json") if p.is_file()]
-        results = list((folder / "examine/review/results").rglob("*.json"))
+        originals = [p for p in (folder / "examine/review/원본").rglob("*.json") if p.is_file()]
+        results = [p for p in (folder / "examine/review/보안").rglob("*.json") if p.is_file()]
         self.assertEqual((len(originals), len(results)), (2, 2))
         self.assertCountEqual([json.loads(p.read_text())["export"]["rows"][0]["label"] for p in results], ["first", "second"])
         for p in (folder / "examine/review/details").glob("*.json"):
@@ -85,7 +85,7 @@ class ExamineOriginalTests(unittest.TestCase):
         for path, rows in ((self.source / "all.jsonl", source_rows), (self.result, incoming)):
             path.write_text("\n".join(json.dumps(row) for row in rows) + "\n", encoding="utf-8-sig")
         folder = self.execute()
-        for subdir, suffix, expected in (("labels", "*.jsonl", source_rows[0]), ("results", "*.ndjson", incoming[0])):
+        for subdir, suffix, expected in (("원본", "*.jsonl", source_rows[0]), ("보안", "*.ndjson", incoming[0])):
             files = [p for p in (folder / "examine/review" / subdir).rglob(suffix) if p.is_file()]
             self.assertEqual(len(files), 1)
             self.assertTrue(files[0].read_bytes().startswith(b"\xef\xbb\xbf"))
@@ -108,7 +108,7 @@ class ExamineOriginalTests(unittest.TestCase):
             writer.writerows(rows)
         folder = self.execute()
         for category, expected in (("review", rows[0]), ("unmatched", rows[1])):
-            files = list((folder / "examine" / category / "results").rglob("*.csv"))
+            files = [p for p in (folder / "examine" / category / "보안").rglob("*.csv") if p.is_file()]
             self.assertEqual(len(files), 1)
             with files[0].open(encoding="utf-8-sig", newline="") as handle:
                 self.assertEqual(list(csv.DictReader(handle)), [expected])
@@ -121,10 +121,49 @@ class ExamineOriginalTests(unittest.TestCase):
         preview = self.execute(preview=True)
         self.assertFalse((preview / "examine").exists())
         folder = self.execute()
-        self.assertEqual((folder / "examine/file_errors/files/source/broken.json").read_bytes(), b'{"broken":')
-        files = list((folder / "examine/file_errors/files/results").rglob("incoming.json"))
+        self.assertEqual((folder / "examine/file_errors/원본/broken.json").read_bytes(), b'{"broken":')
+        files = list((folder / "examine/file_errors/보안").rglob("incoming.json"))
         self.assertEqual(len(files), 1)
         self.assertEqual(files[0].read_bytes(), self.result.read_bytes())
+
+    def test_individual_files_keep_names_subfolders_and_exact_bytes_on_both_sides(self):
+        self.config['source'] = {'key': '/id'}
+        self.config['result'] = {'key': '/id'}
+        inputs = []
+        for branch, key in (('a', 'one'), ('b', 'two')):
+            source = self.source / branch / '같은이름.json'
+            source.parent.mkdir()
+            source.write_bytes(('\ufeff{ "id": "' + key + '", "label": "원본", "n": 1.20000 }\r\n').encode('utf-8'))
+            incoming = self.base / 'incoming' / branch / '같은이름.json'
+            incoming.parent.mkdir(parents=True)
+            incoming.write_bytes(('\ufeff[ { "id": "' + key + '", "label": "", "enabled": true } ]\r\n').encode('utf-8'))
+            inputs.append(incoming)
+        folder = run(self.source, inputs, self.base / 'out', self.config).directory
+        for branch, incoming in zip(('a', 'b'), inputs):
+            relative = Path(branch) / '같은이름.json'
+            self.assertEqual((folder / 'examine/review/원본' / relative).read_bytes(), (self.source / relative).read_bytes())
+            self.assertEqual((folder / 'examine/review/보안' / relative).read_bytes(), incoming.read_bytes())
+        self.assertEqual(len([p for p in (folder / 'examine/review').glob('*/**/*.json') if p.is_file() and 'details' not in p.parts]), 4)
+        for path in (folder / 'examine/review/details').glob('*.json'):
+            detail = json.loads(path.read_text(encoding='utf-8'))
+            self.assertEqual((len(detail['examine_sources']), len(detail['examine_results'])), (1, 1))
+            self.assertTrue(all((folder / p).is_file() for p in detail['examine_sources'] + detail['examine_results']))
+
+    def test_missing_side_creates_no_placeholder_file_or_folder(self):
+        self.config['source'] = {'key': '/id'}
+        self.config['result'] = {'key': '/id'}
+        self.write(self.source / 'source-only.json', {'id': 'a', 'label': 'keep'})
+        self.write(self.result, [])
+        folder = self.execute()
+        self.assertTrue((folder / 'examine/unmatched/원본/source-only.json').is_file())
+        self.assertFalse((folder / 'examine/unmatched/보안').exists())
+        (self.source / 'source-only.json').unlink()
+        self.write(self.source / 'empty.json', [])
+        self.write(self.result, [{'id': 'b', 'label': 'orphan', 'enabled': True}])
+        folder = self.execute()
+        self.assertFalse((folder / 'examine/unmatched/원본').exists())
+        self.assertEqual((folder / 'examine/unmatched/보안/incoming.json').read_bytes(), self.result.read_bytes())
+        self.assertFalse((folder / 'examine/file_errors/보안').exists())
 
 
 if __name__ == "__main__":

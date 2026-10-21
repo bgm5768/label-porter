@@ -49,11 +49,11 @@ class DashboardTests(unittest.TestCase):
             rows = json.loads((outcome.directory / group / "labels/all.json").read_text(encoding="utf-8"))
             self.assertEqual([r.get("id") for r in rows], expected)
         for category, expected in (("unmatched", ["c"]), ("review", ["d", None]), ("excluded", ["e"])):
-            paths = sorted((outcome.directory / "examine" / category / "labels").rglob("*.json"))
+            paths = sorted((outcome.directory / "examine" / category / "원본").rglob("*.json"))
             rows = [json.loads(p.read_text(encoding="utf-8")) for p in paths if p.is_file()]
             self.assertTrue(all(len(row) == 1 for row in rows))
             self.assertCountEqual([row[0].get("id") for row in rows], expected)
-        self.assertEqual((outcome.directory / "examine/file_errors/files/source/broken.json").read_bytes(), b'{"broken":')
+        self.assertEqual((outcome.directory / "examine/file_errors/원본/broken.json").read_bytes(), b'{"broken":')
         archive = [json.loads(p.read_text(encoding="utf-8")) for p in (outcome.directory / "examine").glob("*/details/*.json")]
         self.assertEqual(len(archive), 7)
         orphan = next(row for row in archive if row["status"] == "orphan_result")
@@ -94,7 +94,7 @@ class DashboardTests(unittest.TestCase):
 
     def test_examine_is_always_exported_even_if_normal_split_is_disabled(self):
         outcome = self.execute(split_output=False)
-        self.assertTrue((outcome.directory / "examine/unmatched/labels/all.json/00000003.json").exists())
+        self.assertTrue((outcome.directory / "examine/unmatched/원본/all.json/00000003.json").exists())
         self.assertFalse((outcome.directory / "unchanged").exists())
         self.assertFalse((outcome.directory / "changed").exists())
         self.assertTrue((outcome.directory / "reports/examine_index.jsonl").exists())
@@ -107,9 +107,9 @@ class DashboardTests(unittest.TestCase):
             path.write_text(json.dumps([{"id": "a", "label": label, "enabled": True}]), encoding="utf-8")
         broken = self.base / "broken-result.json"; broken.write_text("{broken", encoding="utf-8")
         outcome = run(self.source, [self.result, twin, broken], self.base / "output", self.config)
-        archived = [json.loads(p.read_text(encoding="utf-8")) for p in (outcome.directory / "examine/review/results").rglob("*.json")]
+        archived = [json.loads(p.read_text(encoding="utf-8")) for p in (outcome.directory / "examine/review/보안").rglob("*.json")]
         self.assertCountEqual([r[0]["label"] for r in archived], ["one", "two"])
-        raw = list((outcome.directory / "examine/file_errors/files/results").rglob("broken-result.json"))
+        raw = list((outcome.directory / "examine/file_errors/보안").rglob("broken-result.json"))
         self.assertEqual(len(raw), 1)
         self.assertEqual(raw[0].read_bytes(), broken.read_bytes())
         self.assertFalse((outcome.directory / "examine/records.jsonl").exists())

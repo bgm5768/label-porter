@@ -45,7 +45,7 @@ class SelectedFilesTests(unittest.TestCase):
             self.assertEqual(result.summary['source_records'], 2)
             self.assertNotEqual(result.summary['status'], 'failed', result.summary)
         self.assertEqual({p.relative_to(actual.directory/'data').as_posix() for p in (actual.directory/'data').rglob('*.json')}, {'a/item.json', 'b/item.json'})
-        archived = actual.directory/'examine/unmatched/labels/b/item.json/00000001.json'
+        archived = actual.directory/'examine/unmatched/원본/b/item.json'
         self.assertEqual(archived.read_bytes(), before[b])
         self.assertEqual({p: p.read_bytes() for p in before}, before)
         with contextlib.redirect_stdout(io.StringIO()): verify(actual.directory)

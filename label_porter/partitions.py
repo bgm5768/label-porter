@@ -111,10 +111,10 @@ def export_partitions(run_dir: Path, source_base: Path, selected_files, record_p
                     for ordinal, address in enumerate(positions, 1):
                         if address not in examined: continue
                         category = "file_errors" if relative in examine_files else examine_categories.get(relative, {}).get(address, "review")
-                        target = label_path(category, relative, ordinal)
+                        target = label_path(category, relative, ordinal, len(positions))
                         exports.append((group, [address], target, category))
                 elif group == "unclassified" or (group == "examine" and positions == [] and relative in examine_files):
-                    exports.append((group, members, Path("examine/file_errors/files/source") / relative, "file_errors"))
+                    exports.append((group, members, label_path("file_errors", relative, None, 0), "file_errors"))
                 elif members:
                     exports.append((group, members, Path(group) / "labels" / relative, ""))
             for group, members, output_relative, category in exports:

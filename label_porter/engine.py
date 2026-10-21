@@ -107,7 +107,8 @@ def run(source_directory: Path | str | list[Path | str] | tuple, result_files: l
 def _execute_run(run_dir, source, result_paths, inventory, selected, config,
                  preview, progress, cancel, split_output, originals, directory_mode):
     data_dir = run_dir / "data"
-    report = Reports(run_dir / "reports", split_output=split_output, preview=preview, result_spec=config["result"])
+    report = Reports(run_dir / "reports", split_output=split_output, preview=preview,
+                     result_spec=config["result"], result_files=result_paths)
     summary = {"version": 4, "profile": config["name"], "preview": bool(preview), "status": "running",
                "started_at": _now(), "source_directory": str(source), "run_directory": str(run_dir),
                "split_output": bool(split_output), "partition_status": "pending" if split_output else "disabled",

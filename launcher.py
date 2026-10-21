@@ -99,6 +99,10 @@ def self_test(output):
             assert result.summary["partition_records"] == {"changed": 1, "unchanged": 0, "examine": 0}
             assert result.directory.name == "001" and len(result.directory.parent.name) == 10
             assert "assets" not in result.summary
+            excluded_config = {**config, 'include_when': [{'left': '/source_id', 'op': 'ne', 'value': 'test'}]}
+            excluded_run = run(source, [base / 'result.json'], base / 'excluded_output', excluded_config)
+            assert (excluded_run.directory / 'examine/excluded/원본/one.json').read_bytes() == (source / 'one.json').read_bytes()
+            assert (excluded_run.directory / 'examine/excluded/보안/result.json').read_bytes() == (base / 'result.json').read_bytes()
             many = base / "many_originals"
             many.mkdir()
             for name in ("a", "b"):

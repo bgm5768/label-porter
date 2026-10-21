@@ -79,7 +79,7 @@ def write_dashboard(directory, summary, catalog, examples):
         ("data/", "전체 복사본 · 검토로 보류한 레코드는 원본 유지", summary.get("output_records", 0)),
         ("changed/labels/", "정상 반영 후 값이 달라진 레코드", partition.get("changed", 0)),
         ("unchanged/labels/", "정상적으로 값이 같은 레코드", partition.get("unchanged", 0)),
-        *[(f"examine/{category}/", label + " · labels/results는 레코드 1건당 파일 · details는 사유",
+        *[(f"examine/{category}/", label + " · 원본/보안은 입력 형태 유지 · 통합 파일은 건별 분리 · details는 사유",
            summary.get("examine_category_counts", {}).get(category, 0)) for category, label in EXAMINE_CATEGORIES.items()],
     ):
         if not summary.get("split_output") and folder.startswith(("changed", "unchanged")):

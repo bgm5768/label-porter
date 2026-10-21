@@ -12,7 +12,7 @@ from .formats import atomic_text
 from .review_report import write_review
 from .detail_store import DetailStore
 from .result_dashboard import write_dashboard
-from .examine import category_for, result_path, label_path, ResultArchive
+from .examine import category_for, label_path, ResultArchive
 
 
 STATUS = {
@@ -31,7 +31,7 @@ def csv_safe(value):
 
 
 class Reports:
-    def __init__(self, directory: Path, split_output=False, preview=False, result_spec=None):
+    def __init__(self, directory: Path, split_output=False, preview=False, result_spec=None, result_files=None):
         self.preview = preview
         self.directory = directory
         self.split_output = bool(split_output)
@@ -43,7 +43,7 @@ class Reports:
         self.examine_files = set()
         self.examine_categories = {}
         self.examine_counts = Counter()
-        self.result_archive = ResultArchive(result_spec or {})
+        self.result_archive = ResultArchive(result_spec or {}, result_files)
         self.source_addresses = {}
         self.details = DetailStore(directory)
         self._all_details = (directory / "record_details.jsonl").open("w", encoding="utf-8")
@@ -82,9 +82,9 @@ class Reports:
         for file, pointer in sources:
             ordinal = self.source_addresses.get(file, {}).get(pointer)
             if ordinal:
-                originals.append(label_path(category, file, ordinal).as_posix())
+                originals.append(label_path(category, file, ordinal, len(self.source_addresses[file])).as_posix())
         if detail["scope"] == "source_file":
-            originals.append((Path("examine/file_errors/files/source") / detail["source_file"]).as_posix())
+            originals.append(label_path(category, detail["source_file"], None, 0).as_posix())
         results = [(detail["result_file"], detail["result_row"])]
         results.extend((row["file"], row["number"]) for row in detail.get("platform_candidates", []))
         incoming = []
@@ -148,7 +148,7 @@ class Reports:
             if not self.preview:
                 base = self.directory.parent
                 if scope == "result" and result_file and not result_row:
-                    target = result_path(category, result_file)
+                    target = self.result_archive.raw_path(category, result_file)
                     try:
                         (base / target).parent.mkdir(parents=True, exist_ok=True)
                         shutil.copyfile(result_file, base / target)

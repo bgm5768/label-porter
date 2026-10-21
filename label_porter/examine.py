@@ -6,6 +6,7 @@ from pathlib import Path
 
 from .formats import DataError, atomic_text, read_document, write_document
 from .partitions import _single, _copy_with_hash
+from .input_files import source_layout
 
 
 CATEGORIES = {
@@ -29,25 +30,32 @@ def category_for(scope, status, result_row="", issues=False):
     return ""
 
 
-def result_path(category, file, number=None, suffix=".json"):
-    identity = hashlib.sha256(str(file).encode("utf-8")).hexdigest()[:16]
-    base = Path("examine") / category
-    if number is None:
-        return base / "files" / "results" / identity / Path(file).name
-    return base / "results" / identity / f"{int(number):08d}{suffix}"
+def result_path(category, file, number=None, suffix=".json", *, single=False, relative=None):
+    if relative is None:
+        identity = hashlib.sha256(str(file).encode("utf-8")).hexdigest()[:16]
+        relative = Path(identity) / Path(file).name
+    base = Path("examine") / category / "보안" / relative
+    return base if number is None or single else base / f"{int(number):08d}{suffix}"
 
 
-def label_path(category, file, ordinal):
+def label_path(category, file, ordinal, total_records):
+    base = Path("examine") / category / "원본" / file
+    if ordinal is None or total_records == 1:
+        return base
     suffix = Path(file).suffix.lower()
-    return Path("examine") / category / "labels" / file / f"{ordinal:08d}{suffix if suffix in ('.jsonl', '.ndjson') else '.json'}"
+    return base / f"{ordinal:08d}{suffix if suffix in ('.jsonl', '.ndjson') else '.json'}"
 
 
 class ResultArchive:
     """Keep addresses, not duplicate JSON trees; read each requested file once."""
-    def __init__(self, spec):
+    def __init__(self, spec, paths=None):
         self.spec = spec
         self.files = {}
         self.requests = {}
+        self.relative_paths = {str(path): relative for relative, path in source_layout(list(paths)).files.items()} if paths else {}
+
+    def raw_path(self, category, file):
+        return result_path(category, file, relative=self.relative_paths.get(file))
 
     def register(self, path, document, rows):
         fmt = self.spec.get("format", "auto")
@@ -63,7 +71,8 @@ class ResultArchive:
         number = int(number)
         if not 1 <= number <= len(info["addresses"]):
             raise DataError("검토할 보완 레코드의 위치가 유효하지 않습니다.")
-        target = result_path(category, file, number, info["suffix"])
+        target = result_path(category, file, number, info["suffix"], single=len(info["addresses"]) == 1,
+                             relative=self.relative_paths.get(file))
         self.requests.setdefault(file, {})[(category, number)] = target
         return target.as_posix()
 
