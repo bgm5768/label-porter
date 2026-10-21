@@ -33,6 +33,7 @@ class App(Workflow):
         self.review_step = 3
         self.connection_confirmed = False
         self.mapping = None
+        self.rule_inspector = None
         self.builder = None
         self.preloaded_preview = None
         self.last_run = self.last_summary = None
@@ -135,8 +136,15 @@ class App(Workflow):
         self.create_rule_button.pack(side="left", padx=(10, 0))
         ttk.Label(group, textvariable=self.rule_file, style="CardMuted.TLabel", wraplength=700).pack(fill="x")
         group = card(project, "현재 규칙")
+        self.current_rule_card = group
         ttk.Label(group, textvariable=self.rule_title, style="CardTitle.TLabel").pack(anchor="w", pady=(8, 8))
         ttk.Label(group, textvariable=self.rule_summary, style="CardMuted.TLabel", wraplength=720).pack(fill="x")
+        self.rule_inspector_host = ttk.Frame(group, height=380)
+        self.rule_inspector_host.pack(fill="x", pady=(12, 0))
+        self.rule_inspector_host.pack_propagate(False)
+        self.rule_inspector_empty = ttk.Label(self.rule_inspector_host, text="규칙을 불러오면 필드 연결과 전체 JSON이 여기에 표시됩니다.", style="Muted.TLabel")
+        self.rule_inspector_empty.pack(anchor="w", padx=10, pady=14)
+        self.rule_inspector_host.configure(height=54)
         self.save_rule_button = ttk.Button(group, text="규칙 내보내기", command=self._save_profile, state="disabled")
         self.save_rule_button.pack(anchor="w", pady=(14, 0))
         group = card(project, "이후 진행 순서")
@@ -375,6 +383,7 @@ class App(Workflow):
         self._config_text = json.dumps(config, ensure_ascii=False, indent=2)
         self.profile_name.set(config["name"]); self.description.set(config.get("description", ""))
         self._invalidate_rule(); self._summarize_rule(config)
+        self._inspect_rule(config)
         self.save_rule_button.configure(state="normal")
         self._sync_actions()
         if self.route == "workflow":
@@ -388,7 +397,21 @@ class App(Workflow):
         self.rule_title.set(config["name"])
         checks = sum(len(config.get(k, [])) for k in ("include_when", "checks", "assertions"))
         connections = profile_connections(config)
-        self.rule_summary.set(f"수정 필드 {sum(r['kind']=='field' for r in connections)}개 · 목록 {sum(r['kind'] in ('items', 'rebuild_items') for r in connections)}개 · 레코드 조건 / 검증 {checks}개\n원본 대상: {config['source'].get('glob', '**/*.json')}\n데이터를 선택한 뒤 3단계에서 필드 연결과 실제 예시를 확인합니다.")
+        self.rule_summary.set(f"수정 필드 {sum(r['kind']=='field' for r in connections)}개 · 목록 {sum(r['kind'] in ('items', 'rebuild_items') for r in connections)}개 · 레코드 조건 / 검증 {checks}개\n규칙에 정의된 연결 · 읽기 전용 · 실제 데이터 비교는 데이터 선택 후 확인합니다.")
+
+    def _inspect_rule(self, config):
+        if self.rule_inspector and self.rule_inspector.profile == config: return
+        if self.rule_inspector: self.rule_inspector._close(notify=False)
+        self.rule_inspector_empty.pack_forget()
+        self.rule_inspector_host.configure(height=380)
+        self.rule_inspector = RuleReview(self.rule_inspector_host, config, lambda: None, lambda: None,
+                                         external_navigation=True, profile_only=True)
+
+    def _focus_current_rule(self):
+        self.root.update_idletasks()
+        page = self.step_pages[0]
+        height = page.body.winfo_height()
+        if height: page.canvas.yview_moveto(max(0, self.current_rule_card.winfo_y() - 8) / height)
 
     def _invalidate_preview(self):
         if self.preloaded_preview and self.preloaded_preview[0] != self._mapping_inputs():
@@ -443,7 +466,10 @@ class App(Workflow):
                 if not self.output.get().strip(): self.output.set(str(default_output_directory()))
                 self._set_config(config)
                 self.rule_file.set(str(Path(path)))
-                self._advance_inputs()
+                self._show_step(0)
+                self._focus_current_rule()
+                self.status.set("규칙을 불러왔습니다. 연결과 JSON을 확인한 뒤 ‘다음 단계’를 눌러 데이터를 선택하세요.")
+                self._save_settings()
             except (OSError, ValueError, TypeError, KeyError) as exc: self.status.set(f"규칙 불러오기: {exc}")
 
     def _save_profile(self):
@@ -588,6 +614,7 @@ class App(Workflow):
     def _close(self):
         if self.running: self.status.set("‘작업 중단’을 누르고 보고서 저장이 끝나면 닫을 수 있습니다."); return
         if self.mapping and not self.mapping.closed: self.mapping._close()
+        if self.rule_inspector: self.rule_inspector._close(notify=False)
         self._close_builder()
         self._save_settings(); self.root.after_cancel(self.poll_job); self.root.destroy()
 

@@ -1,6 +1,6 @@
 # 라벨 포터
 
-**버전 관리 기준: v1 (2026-10-20)** — 프로그램 2.4.0을 첫 Git 기준 버전으로 보관합니다. `v1` 태그로 이 상태를 다시 확인할 수 있습니다. 현재 프로그램은 **2.17.0**이며 변경 내역은 [CHANGELOG.md](CHANGELOG.md)에 기록합니다.
+**버전 관리 기준: v1 (2026-10-20)** — 프로그램 2.4.0을 첫 Git 기준 버전으로 보관합니다. `v1` 태그로 이 상태를 다시 확인할 수 있습니다. 현재 프로그램은 **2.18.0**이며 변경 내역은 [CHANGELOG.md](CHANGELOG.md)에 기록합니다.
 
 플랫폼 DB에 접근하지 않고, 어드민에서 내려받은 작업 결과를 원본 라벨링 JSON에 반영하는 Windows 데스크톱 프로그램입니다. 모든 데이터 처리는 로컬에서 이루어집니다. 외부 서비스나 AI 호출이 없습니다.
 
@@ -18,7 +18,7 @@
 
 ## 실행
 
-- Windows 실행 파일: `dist/v2.17/LabelPorter.exe`를 더블클릭합니다. Python 설치가 필요하지 않습니다.
+- Windows 실행 파일: `dist/v2.18/LabelPorter.exe`를 더블클릭합니다. Python 설치가 필요하지 않습니다.
 - 소스 실행: Python 3.11 이상에서 `python -m label_porter` 또는 `start.cmd`를 실행합니다. 먼저 `python -m pip install -r requirements.txt`로 문서 뷰어 의존성을 설치합니다. Windows 공식 Python의 Tkinter를 사용합니다. 실행 파일에는 문서 뷰어가 내장되어 별도 설치가 필요 없습니다.
 - 상세 규칙 설명: [사용설명.md](사용설명.md)
 - 후처리 가능 수준과 제한: [후처리_지원범위.md](후처리_지원범위.md) — 프로그램의 사용 방법 화면에도 포함됩니다.
@@ -38,7 +38,7 @@
 **AI 규칙 파일을 사용하는 방법:**
 
 1. 왼쪽 아래 **사용 방법 → AI 규칙 작성 가이드**에서 MD를 저장하거나 복사해 원본·플랫폼/보완 데이터와 함께 AI에게 전달합니다.
-2. **규칙 파일 불러오기**로 `project_profile.json`을 엽니다. 곧바로 입력 단계로 이동합니다.
+2. **규칙 파일 불러오기**로 `project_profile.json`을 엽니다. 같은 화면의 **현재 규칙** 아래에서 **필드 연결 / 규칙 JSON**을 확인합니다. 연결 행을 누르면 세부 설정을 볼 수 있으며, **규칙 내보내기**는 그 아래에 있습니다. **다음 단계**를 누르면 데이터 선택으로 이동합니다.
 3. 전체 원본 폴더, 플랫폼/보완 파일들, 저장 위치를 선택합니다.
 4. **필드 연결**과 **필드 연결 프리뷰**를 확인합니다. 전체 목록을 자동으로 불러오며 KEY·파일명·JSON 내용 검색, 연결 상태 필터, 페이지 이동을 지원합니다. 외부에서 파일을 변경했다면 ‘데이터 새로 읽기’를 누릅니다.
 5. **다음 단계 → 전체 데이터 검증 → 처리 결과서 → 복사본 저장** 순서로 진행합니다.
@@ -147,8 +147,8 @@ Windows 단일 실행 파일 빌드:
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt pyinstaller==6.22.3
-.\.venv\Scripts\python.exe -m PyInstaller --noconfirm --clean --distpath 'dist\v2.17' --workpath 'build\v2.17' LabelPorter.spec
-Copy-Item -LiteralPath '사용설명.md','AI_규칙작성_가이드.md','후처리_지원범위.md','THIRD_PARTY_NOTICES.txt' -Destination 'dist\v2.17'
+.\.venv\Scripts\python.exe -m PyInstaller --noconfirm --clean --distpath 'dist\v2.18' --workpath 'build\v2.18' LabelPorter.spec
+Copy-Item -LiteralPath '사용설명.md','AI_규칙작성_가이드.md','후처리_지원범위.md','THIRD_PARTY_NOTICES.txt' -Destination 'dist\v2.18'
 ```
 
 ## 저장소에 포함하는 파일

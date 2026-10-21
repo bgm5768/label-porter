@@ -2,6 +2,7 @@ import copy
 import json
 import tkinter as tk
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -94,3 +95,21 @@ class ReviewUiTests(unittest.TestCase):
         self.review.apply_button.invoke()
         self.assertEqual(self.accepted, [True])
         self.assertTrue(self.review.preview.closed)
+
+    def test_profile_only_reuses_nested_connections_without_creating_a_data_preview(self):
+        with patch('label_porter.rule_review.PairPreview', side_effect=AssertionError('Unexpected file loader')):
+            panel = RuleReview(self.root, self.profile, lambda: None, lambda: None, profile_only=True, external_navigation=True)
+        try:
+            self.root.update()
+            self.assertIsNone(panel.preview)
+            self.assertEqual(panel.rows, profile_connections(self.profile))
+            self.assertEqual(json.loads(panel.raw_box.get('1.0', 'end')), self.profile)
+            panel.query.set('/start')
+            self.assertEqual(len(panel.visible_rows()), 1)
+            panel.query.set('')
+            item = next(i for i in panel.canvas.find_withtag('connection:1') if panel.canvas.type(i) == 'rectangle')
+            box = panel.canvas.bbox(item)
+            panel._select(SimpleNamespace(x=box[0]+5, y=box[1]+5))
+            self.assertEqual(panel.detail.frame.winfo_manager(), 'pack')
+            self.assertIn('require_same_keys', panel.detail.get('1.0', 'end'))
+        finally: panel._close(notify=False)

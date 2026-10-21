@@ -98,12 +98,13 @@ def profile_connections(profile):
 
 class RuleReview:
     """Paired rows show only configured connections, with full JSON available on click."""
-    def __init__(self, parent, profile, on_continue, on_close, *, source_hint="", result_hints=(), configured=False, external_navigation=False, preloaded=None):
+    def __init__(self, parent, profile, on_continue, on_close, *, source_hint="", result_hints=(), configured=False, external_navigation=False, preloaded=None, profile_only=False):
         self.profile = copy.deepcopy(validate_config(profile))
         self.rows = profile_connections(self.profile)
         self.on_continue, self.on_close = on_continue, on_close
         self.closed = False
         self.external_navigation = external_navigation
+        self.profile_only = profile_only
         self.selected = None
         self.window = ttk.Frame(parent)
         self.window.pack(fill="both", expand=True)
@@ -121,11 +122,14 @@ class RuleReview:
         self.apply_button = ttk.Button(actions, text="확인 완료 · 전체 검증 →" if configured else "연결 확인 완료 · 입력 선택 →", style="Primary.TButton", command=self._apply)
         self.apply_button.pack(side="right")
         self.pages = ttk.Notebook(self.window); self.pages.pack(fill="both", expand=True)
-        visual, preview, raw = [ttk.Frame(self.pages, padding=10) for _ in range(3)]
-        for page, name in ((visual, "필드 연결"), (preview, "필드 연결 프리뷰"), (raw, "규칙 JSON")):
+        visual, raw = [ttk.Frame(self.pages, padding=10) for _ in range(2)]
+        preview = None if profile_only else ttk.Frame(self.pages, padding=10)
+        tabs = [(visual, "필드 연결"), (raw, "규칙 JSON")] if profile_only else [(visual, "필드 연결"), (preview, "필드 연결 프리뷰"), (raw, "규칙 JSON")]
+        for page, name in tabs:
             self.pages.add(page, text=name)
-        ttk.Label(visual, text="보완 전 원본의 위치  ←  규칙에서 가져올 값", style="Heading.TLabel").pack(anchor="w", pady=(0, 6))
-        ttk.Label(visual, text="읽기 전용 · 연결된 항목만 표시합니다. 행을 누르면 해당 규칙의 전체 설정이 아래에 보입니다.", foreground=MUTED, wraplength=750).pack(anchor="w", pady=(0, 10))
+        ttk.Label(visual, text="보완 전 원본의 위치  ←  규칙에서 가져올 값", style="TLabel" if profile_only else "Heading.TLabel").pack(anchor="w", pady=(0, 6))
+        if not profile_only:
+            ttk.Label(visual, text="읽기 전용 · 연결된 항목만 표시합니다. 행을 누르면 해당 규칙의 전체 설정이 아래에 보입니다.", foreground=MUTED, wraplength=750).pack(anchor="w", pady=(0, 10))
         ttk.Label(visual, text=f"레코드 기준 위치  원본: {self.profile['source'].get('records_path') or '파일 전체'}  /  결과: {self.profile['result'].get('records_path') or '파일 전체'}",
                   foreground=MUTED, wraplength=750).pack(anchor="w", pady=(0, 8))
         search = ttk.Frame(visual); search.pack(fill="x", pady=(0, 8))
@@ -137,7 +141,7 @@ class RuleReview:
         ttk.Label(visual, textvariable=self.count, foreground=MUTED).pack(anchor="w", pady=(0, 5))
         # The detail pane is intentionally short; its own scrollbar exposes the complete rule.
         self.detail = scrolledtext.ScrolledText(visual, wrap="word", height=4, font=("맑은 고딕", 9), relief="flat", state="disabled")
-        self.detail.pack(side="bottom", fill="x", pady=(8, 0))
+        if not profile_only: self.detail.pack(side="bottom", fill="x", pady=(8, 0))
         self._text(self.detail, "연결 행을 선택하면 조건·변환·검증을 포함한 전체 설정을 확인할 수 있습니다.")
         area = ttk.Frame(visual); area.pack(fill="both", expand=True)
         self.canvas = tk.Canvas(area, background=BG, highlightthickness=0)
@@ -150,8 +154,10 @@ class RuleReview:
         self.canvas.bind("<MouseWheel>", lambda e: self.canvas.yview_scroll(-1 if e.delta > 0 else 1, "units"))
         self.query.trace_add("write", self._filter)
         self.filter_kind.trace_add("write", self._filter)
-        self.preview = PairPreview(preview, self.profile, source_hint, result_hints, configured=configured, preloaded=preloaded)
-        self.preview.pack(fill="both", expand=True)
+        self.preview = None
+        if not profile_only:
+            self.preview = PairPreview(preview, self.profile, source_hint, result_hints, configured=configured, preloaded=preloaded)
+            self.preview.pack(fill="both", expand=True)
         self.raw_box = self._box(raw); self._text(self.raw_box, json_text(self.profile))
         self._draw()
 
@@ -219,6 +225,8 @@ class RuleReview:
             if tag:
                 self.selected = int(tag.split(":")[1])
                 row = self.rows[self.selected]
+                if self.profile_only and not self.detail.frame.winfo_manager():
+                    self.detail.pack(side="bottom", fill="x", pady=(8, 0), before=self.canvas.master)
                 self._text(self.detail, f"{LABELS[row['kind']]} · {row['context']}\n원본: {row['source']}\n결과: {row['result']}\n{row['notes']}\n\n전체 설정\n{json_text(row['raw'])}")
                 self._draw()
                 break
@@ -231,6 +239,6 @@ class RuleReview:
     def _close(self, notify=True):
         if self.closed: return
         self.closed = True
-        self.preview.close()
+        if self.preview: self.preview.close()
         self.window.destroy()
         if notify: self.on_close()

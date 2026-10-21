@@ -19,7 +19,7 @@ def self_test(output):
             app = App(root)
         app._save_settings = lambda: None  # Self-tests must never alter the user's working project.
         root.update_idletasks()
-        config = next(profile for path, profile in app.profiles.values() if path.stem == "generic")
+        rule_path, config = next((path, profile) for path, profile in app.profiles.values() if path.stem == "generic")
         assert len(app.profiles) == 4
         assert len(app.tabs.tabs()) == 3
         assert len(app.steps.tabs()) == 4
@@ -35,8 +35,14 @@ def self_test(output):
         assert app.tabs.tab(2, "text") == "후처리 지원 범위"
         assert all(text not in app.help_text for text in ("one_before", "one_after", "008", "013"))
         assert not hasattr(app, "assets_directory")
-        app._set_config(config)
-        app._advance_inputs()
+        with patch('label_porter.gui.filedialog.askopenfilename', return_value=str(rule_path)):
+            app._load_profile()
+        assert app.current_step == 0 and app.rule_ready
+        inspector = app.rule_inspector
+        assert inspector.preview is None
+        assert [inspector.pages.tab(tab, "text") for tab in inspector.pages.tabs()] == ["필드 연결", "규칙 JSON"]
+        assert json.loads(inspector.raw_box.get("1.0", "end")) == config
+        app.primary_button.invoke()
         assert app.current_step == 1 and app.rule_ready
         assert not hasattr(app, 'editor') and not hasattr(app, '_new_project')
         with tempfile.TemporaryDirectory(prefix="label_porter_selftest_") as temp:
@@ -154,7 +160,7 @@ def self_test(output):
             assert app.mapping.preview.pair["output"]["label"] == "easy"
             app._close_mapping(); app._close_builder()
         root.destroy()
-        Path(output).write_text(json.dumps({"ok": True, "tk": True, "profiles": 4, "engine": True, "original_preserved": True, "split_output": True, "date_sequence": True, "reusable_preview": True, "media_feature_removed": True, "ai_guide_bundled": True, "general_project_help": True, "inline_help": True, "shared_navigation": True, "four_step_workflow": True, "automatic_data_preview": True, "ai_rule_roundtrip": True, "multiple_sample_files": True, "per_file_identity": True, "ai_first_workflow": True, "readonly_field_review": True, "automatic_next_step": True, "easy_rules": True}), encoding="utf-8")
+        Path(output).write_text(json.dumps({"ok": True, "tk": True, "profiles": 4, "engine": True, "original_preserved": True, "split_output": True, "date_sequence": True, "reusable_preview": True, "media_feature_removed": True, "ai_guide_bundled": True, "general_project_help": True, "inline_help": True, "shared_navigation": True, "four_step_workflow": True, "automatic_data_preview": True, "ai_rule_roundtrip": True, "multiple_sample_files": True, "per_file_identity": True, "ai_first_workflow": True, "readonly_field_review": True, "inline_rule_inspection": True, "explicit_next_step": True, "easy_rules": True}), encoding="utf-8")
         return 0
     except Exception:
         Path(output).write_text(json.dumps({"ok": False, "error": traceback.format_exc()}), encoding="utf-8")

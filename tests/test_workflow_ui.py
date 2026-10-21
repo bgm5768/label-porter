@@ -97,13 +97,16 @@ class WorkflowUiTests(unittest.TestCase):
         self.root.update()
         self.assertEqual(app.current_step, 3)
 
-    def test_import_advances_to_inputs_then_automatically_loads_pair(self):
+    def test_import_shows_rule_then_explicit_next_automatically_loads_pair(self):
         with patch.object(App, "_load_settings"), patch.object(App, "_save_settings") as save:
             app = App(self.root)
             rule_file = self.base / 'ai_rules.json'
             rule_file.write_text(json.dumps(self.config()), encoding='utf-8')
             with patch('label_porter.gui.filedialog.askopenfilename', return_value=str(rule_file)):
                 app._load_profile()
+            self.assertEqual(app.current_step, 0)
+            self.assertIsNotNone(app.rule_inspector)
+            app.primary_button.invoke(); self.root.update()
             self.assertEqual(app.current_step, 1)
             self.assertIsNone(app.mapping)
             self.assertTrue(app.rule_ready)
@@ -325,21 +328,45 @@ class WorkflowUiTests(unittest.TestCase):
             self.assertEqual(app.primary_button['text'], '전체 데이터 검증')
 
     def test_import_replaces_project_inputs_but_invalid_import_preserves_them(self):
-        with patch.object(App, '_load_settings'), patch.object(App, '_save_settings'):
+        with patch.object(App, '_load_settings'), patch.object(App, '_save_settings') as save:
             app = App(self.root); app._set_config(self.config()); self.configure_inputs(app)
+            previous = app.rule_inspector
             original = self.sf.read_bytes()
             path = self.base/'profile.json'; path.write_text('{}', encoding='utf-8')
-            with patch('label_porter.gui.filedialog.askopenfilename', return_value=str(path)):
+            with patch('label_porter.gui.filedialog.askopenfilename', return_value=str(path)), \
+                 patch('label_porter.rule_review.PairPreview', side_effect=AssertionError('No data preview before inputs')):
                 app._load_profile()
                 self.assertEqual(app.source.get(), str(self.source))
                 self.assertEqual(app._get_config(), self.config())
+                self.assertIs(app.rule_inspector, previous)
+                save.assert_not_called()
                 path.write_text(json.dumps({**self.config(), 'name': 'new rules'}), encoding='utf-8')
                 app._load_profile()
-            self.assertEqual(app.current_step, 1)
+            self.assertEqual(app.current_step, 0)
+            self.assertEqual(app.route, 'workflow')
+            self.assertTrue(previous.closed)
+            inspector = app.rule_inspector
+            self.assertIsNone(inspector.preview)
+            self.assertEqual([inspector.pages.tab(t, 'text') for t in inspector.pages.tabs()], ['필드 연결', '규칙 JSON'])
+            self.assertEqual(json.loads(inspector.raw_box.get('1.0', 'end')), app._get_config())
+            self.assertEqual(str(inspector.raw_box['state']), 'disabled')
+            self.assertEqual(inspector.rows[0]['source'], '/id')
+            self.assertEqual(inspector.rows[0]['result'], '/ref')
+            self.assertEqual(inspector.rows[1]['source'], '/label')
+            self.assertEqual(inspector.rows[1]['result'], '/new')
+            save.assert_called_once()
             self.assertEqual(app.source.get(), '')
             self.assertEqual(app.result_paths, [])
             self.assertEqual(app._get_config()['name'], 'new rules')
             self.assertEqual(self.sf.read_bytes(), original)
+            exported = self.base/'exported.json'
+            with patch('label_porter.gui.filedialog.asksaveasfilename', return_value=str(exported)):
+                app.save_rule_button.invoke()
+            self.assertEqual(json.loads(exported.read_text(encoding='utf-8')), app._get_config())
+            app.primary_button.invoke()
+            self.assertEqual(app.current_step, 1)
+            app.back_button.invoke()
+            self.assertIs(app.rule_inspector, inspector)
 
     def test_output_default_and_selected_path_are_not_based_on_source_folder(self):
         with patch.object(App, "_load_settings"), patch.object(App, "_save_settings"):
