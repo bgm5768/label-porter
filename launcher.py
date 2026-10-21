@@ -144,6 +144,14 @@ def self_test(output):
                                                 {"items": [{"id": 99, "text": "new"}, {"id": 100, "text": "added"}]},
                                                 rebuild_profile, {})
             assert state == "updated" and rebuilt["items"] == [{"id": 1, "text": "new"}, {"id": 2, "text": "added"}]
+            from label_porter.pair_preview import load_preview, match_preview
+            preview_source, preview_result = base / 'rebuild_source.json', base / 'rebuild_result.json'
+            preview_source.write_text(json.dumps({'id': 1, 'items': [{'id': 10, 'text': 'old'}]}), encoding='utf-8')
+            preview_result.write_text(json.dumps({'id': 1, 'items': [{'id': 10, 'text': 'new'}]}), encoding='utf-8')
+            rebuild_pair = match_preview(load_preview(rebuild_profile, preview_source, [preview_result]))
+            old_text = next(row for row in rebuild_pair['rows'] if row.get('target_path') == '/items/0/text')
+            assert old_text['source'] == '"old"' and old_text['comparison'] == 'id'
+            assert rebuild_pair['output']['items'] == [{'id': 1, 'text': 'new'}]
             # Exercise the bundled optional builder and its cached preview handoff.
             easy_result = base / "easy.json"
             easy_result.write_text(json.dumps([{"dataID": "external", "importData_id": "test",

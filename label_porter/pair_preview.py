@@ -223,6 +223,38 @@ def catalog_preview(data, index):
             "result_total": data.result_total, "invalid_result_keys": data.invalid_result_keys}
 
 
+def rebuilt_comparison(info, number, cache):
+    """Compare actual originals for display only; rebuilding still starts with {}."""
+    cache_key = id(info)
+    if cache_key not in cache:
+        indexes, counts, result_keys = {}, Counter(), []
+        for side in ('source', 'result'):
+            items = info['original'] if side == 'source' else info['incoming']
+            for index, item in enumerate(items):
+                ctx = {**info['context'], side: item}
+                if side == 'source': ctx['original'] = item
+                try: key = canonical_key(expression(info['rule'][side + '_key'], ctx))
+                except ERRORS: key = None
+                if side == 'source':
+                    if key is not None: indexes.setdefault(key, []).append(index)
+                else:
+                    result_keys.append(key)
+                    if key is not None: counts[key] += 1
+        cache[cache_key] = info, indexes, counts, result_keys
+    _, indexes, counts, result_keys = cache[cache_key]
+    key = result_keys[number]
+    candidates = indexes.get(key, [])
+    if key is not None and len(candidates) == 1 and counts[key] == 1:
+        old_index, mode = candidates[0], 'id'
+        note = '같은 ID의 원본 항목을 비교합니다. 목록 재구성은 보완 목록을 기준으로 진행합니다.'
+    elif number < len(info['original']):
+        old_index, mode = number, 'position'
+        note = 'ID로 한 항목을 확정할 수 없어 같은 위치의 원본을 참고로 표시합니다. 동일 항목으로 연결했다는 뜻은 아닙니다.'
+    else:
+        return MISSING, '', 'missing', '대응 ID가 없거나 중복이며, 이 위치에도 원본 항목이 없습니다. 보완값으로 새 항목을 구성합니다.'
+    return info['original'][old_index], info['prefix'] + '/' + str(old_index), mode, note
+
+
 def match_preview(data, index=0):
     if not 0 <= index < len(data.originals):
         raise DataError(f"원본 항목 번호는 1~{len(data.originals):,} 사이로 입력하세요.")
@@ -247,6 +279,7 @@ def match_preview(data, index=0):
         "evaluated": "", "note": "규칙의 KEY가 같은 레코드 한 쌍입니다.",
     }]
     visited = 0
+    rebuilt_cache = {}
     def observe(rule, ctx, prefix, active):
         nonlocal visited
         visited += 1
@@ -254,18 +287,25 @@ def match_preview(data, index=0):
             return
         values = observed(rule["from"], ctx) if active else {}
         before = get_pointer(ctx["original"], rule["to"])
+        source_path = prefix + rule['to']
+        extras = {}
         note = "원본에 반영하기 전 읽기 전용 예시입니다."
         if prefix:
             note = "해당 목록 항목의 값입니다. 항목 순서로 임의 연결하지 않습니다."
         if ctx.get("_preview_rebuilt"):
-            note = "목록 재구성으로 새로 만드는 항목입니다. 원본 목록은 상위 연결 및 JSON에서 확인하세요."
+            item, old_prefix, mode, note = rebuilt_comparison(ctx['_preview_rebuild_info'], ctx['meta']['item_number'] - 1, rebuilt_cache)
+            before = get_pointer(item, rule['to']) if item is not MISSING else MISSING
+            source_path = old_prefix + rule['to'] if old_prefix else '대응하는 원본 항목 없음'
+            extras = {'source_label': {'id': '원본 값 · ID 기준 비교', 'position': '원본 같은 위치 · 참고', 'missing': '원본 항목'}[mode],
+                      'comparison': mode, 'target_path': prefix + rule['to']}
+            if mode == 'missing': extras['source'] = '대응하는 원본 항목 없음'
         if not active:
             note = "이 규칙의 적용 조건에 해당하지 않아 반영하지 않습니다."
         rows.append({
-            "kind": rule["kind"], "source_path": prefix + rule["to"], "result_expr": copy.deepcopy(rule["from"]),
+            "kind": rule["kind"], "source_path": source_path, "result_expr": copy.deepcopy(rule["from"]),
             "source": display(before), "result": display(values["raw"]) if values.get("raw_present") else values.get("raw_error", "조건 제외"),
             "evaluated": display(values["evaluated"]) if values.get("evaluated_present") else values.get("evaluated_error", ""),
-            "note": note, "nested": bool(prefix),
+            "note": note, "nested": bool(prefix), **extras,
         })
     advisories = []
     try:

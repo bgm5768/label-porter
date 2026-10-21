@@ -21,6 +21,10 @@ def rebuild_items(rule, context, changes, notes, prefix):
             raise ReviewRequired("목록 정렬값은 유한한 숫자여야 합니다.")
         incoming = [item for _, item in sorted(ranked, key=lambda pair: pair[0])]
     rebuilt = []
+    preview_info = None
+    if context.get("_observe"):
+        preview_info = {"rule": rule, "context": context, "original": original, "incoming": incoming,
+                        "prefix": context.get("_preview_prefix", "") + prefix + rule["to"]}
     for number, item in enumerate(incoming, 1):
         target = {}
         sub = {**context, "source": target, "original": {}, "result": item,
@@ -28,6 +32,7 @@ def rebuild_items(rule, context, changes, notes, prefix):
         if context.get("_observe"):
             sub["_preview_prefix"] = context.get("_preview_prefix", "") + prefix + rule["to"] + "/" + str(number - 1)
             sub["_preview_rebuilt"] = True
+            sub["_preview_rebuild_info"] = preview_info
         _apply_rules(rule["rules"], sub, [], [])
         rebuilt.append(target)
 

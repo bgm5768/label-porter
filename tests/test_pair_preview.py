@@ -157,9 +157,72 @@ class PairTests(unittest.TestCase):
         pair = match_preview(self.load())
         self.assertEqual(pair["candidate"]["parts"], [{"value": "two", "id": 1}, {"value": "four", "id": 2}])
         self.assertEqual(pair["candidate"]["PronunciationErrorTags"], [{"id": 9}])
-        self.assertEqual(pair["rows"][2]["source"], "필드 없음")
-        self.assertEqual(pair["rows"][2]["source_path"], "/parts/0/value")
+        self.assertEqual(pair["rows"][2]["source"], "대응하는 원본 항목 없음")
+        self.assertEqual(pair["rows"][2]["comparison"], "missing")
+        self.assertEqual(pair["rows"][2]["target_path"], "/parts/0/value")
         self.assertEqual(pair["rows"][2]["result"], '"two"')
+
+    def rebuild_rule(self):
+        return {"kind": "rebuild_items", "from": "/parts", "to": "/parts", "source_key": {"scope": "source", "path": "/id"},
+                "result_key": "/id", "rules": [{"kind": "field", "from": "/id", "to": "/id", "allow_create": True},
+                                              {"kind": "field", "from": "/value", "to": "/value", "allow_create": True}]}
+
+    def test_rebuilt_rows_show_real_id_matched_original_and_new_position(self):
+        self.config['rules'] = [self.rebuild_rule()]
+        original = {'id': 1, 'parts': [{'id': 1, 'value': 9.4}, {'id': 2, 'value': '보았지만'}]}
+        incoming = {'id': 1, 'parts': [{'id': 2, 'value': '보았지만 수정'}, {'id': 1, 'value': 9.53}]}
+        self.write(original, incoming)
+        pair = match_preview(self.load())
+        fields = [r for r in pair['rows'] if r.get('target_path', '').endswith('/value')]
+        self.assertEqual([r['source'] for r in fields], ['"보았지만"', '9.4'])
+        self.assertEqual(fields[0]['source_path'], '/parts/1/value')
+        self.assertEqual(fields[0]['target_path'], '/parts/0/value')
+        self.assertTrue(all(r['comparison'] == 'id' for r in fields))
+        expected = apply_record(original, incoming, self.config, {})[0]
+        self.assertEqual(pair['output'], expected)
+        self.assertEqual(pair['source'], original)
+
+    def test_rebuilt_unmatched_or_duplicate_ids_show_position_reference_and_genuine_missing_field(self):
+        self.config['rules'] = [self.rebuild_rule()]
+        for originals, incoming in (
+            ([{'id': 1, 'value': 'old'}], [{'id': 9, 'value': 'new'}, {'id': 10, 'value': 'added'}]),
+            ([{'id': 1, 'value': 'old'}, {'id': 1}], [{'id': 1, 'value': 'new'}, {'id': 1, 'value': 'also new'}]),
+        ):
+            with self.subTest(originals=originals):
+                self.write({'id': 1, 'parts': originals}, {'id': 1, 'parts': incoming})
+                pair = match_preview(self.load())
+                fields = [r for r in pair['rows'] if r.get('target_path', '').endswith('/value')]
+                self.assertEqual(fields[0]['comparison'], 'position')
+                self.assertEqual(fields[0]['source'], '"old"')
+                self.assertIn('참고', fields[0]['source_label'])
+                self.assertEqual(fields[1]['source'], '필드 없음' if len(originals) == 2 else '대응하는 원본 항목 없음')
+                self.assertEqual(pair['output'], apply_record(pair['source'], pair['result'], self.config, {})[0])
+
+    def test_rebuild_comparison_does_not_supply_original_to_rule_evaluation(self):
+        rule = self.rebuild_rule()
+        rule['rules'][1]['from'] = {'scope': 'original', 'path': '/value'}
+        self.config['rules'] = [rule]
+        self.write({'id': 1, 'parts': [{'id': 1, 'value': 'old'}]}, {'id': 1, 'parts': [{'id': 1, 'value': 'new'}]})
+        pair = match_preview(self.load())
+        self.assertEqual(pair['status'], 'review_required')
+        self.assertEqual(pair['output'], pair['source'])
+        self.assertEqual(pair['rows'][-1]['source'], '"old"')
+
+    def test_nested_rebuild_comparison_keeps_original_path_after_sorting(self):
+        nested = self.rebuild_rule()
+        nested['sort_by'] = '/id'
+        self.config['rules'] = [{'kind': 'items', 'from': '/groups', 'to': '/groups',
+                                'source_key': {'scope': 'source', 'path': '/id'}, 'result_key': '/id',
+                                'rules': [nested]}]
+        groups = [{'id': 'a', 'parts': [{'id': 2, 'value': 'a2'}, {'id': 1, 'value': 'a1'}]},
+                  {'id': 'b', 'parts': [{'id': 2, 'value': 'b2'}, {'id': 1, 'value': 'b1'}]}]
+        self.write({'id': 1, 'groups': groups}, {'id': 1, 'groups': list(reversed(groups))})
+        pair = match_preview(self.load())
+        fields = [row for row in pair['rows'] if row.get('target_path', '').endswith('/value')]
+        self.assertEqual([row['source'] for row in fields], ['"b1"', '"b2"', '"a1"', '"a2"'])
+        self.assertEqual(fields[0]['source_path'], '/groups/1/parts/1/value')
+        self.assertEqual(fields[0]['target_path'], '/groups/1/parts/0/value')
+        self.assertEqual(pair['output'], apply_record(pair['source'], pair['result'], self.config, {})[0])
 
     def test_catalog_includes_every_record_without_guessing_duplicate_pairs(self):
         self.write([{"id": "ok", "value": "원본"}, {"id": "source-only"}, {"id": "dup"}, {"id": "dup"}, {"bad": True}],

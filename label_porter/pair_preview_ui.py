@@ -475,7 +475,9 @@ class PairPreview(ttk.Frame):
             result_path = describe_expression(row["result_expr"])
             if row.get("nested"):
                 result_path = "해당 목록 항목 · " + result_path
-            left = source_path + "\n\n원본 값\n" + short(row["source"])
+            left = source_path + "\n\n" + row.get('source_label', '원본 값') + "\n" + short(row["source"])
+            if row.get('target_path'):
+                left += '\n\n재구성 후 위치\n' + row['target_path']
             target = result_path + "\n\n보완 값\n" + short(row["result"])
             if row["evaluated"] and row["evaluated"] != row["result"]:
                 target += "\n\n변환 후 가져올 값\n" + short(row["evaluated"])
@@ -508,7 +510,8 @@ class PairPreview(ttk.Frame):
                 dialog.title("연결된 실제 값 · 읽기 전용"); dialog.geometry("800x600"); dialog.transient(self.winfo_toplevel())
                 box = scrolledtext.ScrolledText(dialog, wrap="word", font=("Consolas", 10))
                 box.pack(fill="both", expand=True)
-                self._text(box, f"{row['note']}\n\n원본 값\n{row['source']}\n\n보완 값\n{row['result']}\n\n변환 후 가져올 값\n{row['evaluated']}")
+                location = f"\n\n원본 위치\n{row['source_path']}" + (f"\n\n재구성 후 위치\n{row['target_path']}" if row.get('target_path') else '')
+                self._text(box, f"{row['note']}{location}\n\n{row.get('source_label', '원본 값')}\n{row['source']}\n\n보완 값\n{row['result']}\n\n변환 후 가져올 값\n{row['evaluated']}")
                 break
 
     def close(self):
