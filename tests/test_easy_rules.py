@@ -212,7 +212,8 @@ class EasyRulesUiTests(unittest.TestCase):
                 self.assertTrue(panel.skip_empty.get())
                 self.assertFalse(errors, errors)
         finally:
-            if "app" in locals(): app._close_mapping(); app._close_builder()
+            if "app" in locals():
+                app._close_mapping(); app._close_builder(); app.updater.destroy()
             for job in root.tk.call("after", "info"): root.after_cancel(job)
             root.destroy()
 
@@ -290,7 +291,7 @@ class EasyRulesUiTests(unittest.TestCase):
                 app._close_mapping(); app._close_builder()
         finally:
             if "app" in locals():
-                app._close_mapping(); app._close_builder()
+                app._close_mapping(); app._close_builder(); app.updater.destroy()
             for job in root.tk.call("after", "info"): root.after_cancel(job)
             root.destroy()
 

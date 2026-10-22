@@ -23,6 +23,9 @@ from scripts.release import VERSION_FILES, current_version, make_package, prepar
 class UpdateTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(); self.addCleanup(self.temp.cleanup)
+        # Model the old installed executable independently of this source release.
+        old_version = patch('label_porter.update_install.__version__', '2.25.4')
+        old_version.start(); self.addCleanup(old_version.stop)
         self.base = Path(self.temp.name)
         self.package_dir = self.base / 'release'; self.package_dir.mkdir()
         for name in FILES: (self.package_dir / name).write_bytes(('new:' + name).encode())
