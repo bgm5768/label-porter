@@ -42,9 +42,35 @@ SCRIPT = r"""
   const indexed = all.map(row => ({row, text: [row['상태'], row['원본'], row['보완'], row['키'], row['위치'], row['사유']].join(' ').toLowerCase()}));
   const category = dashboard ? document.getElementById('report-category') : null;
   const status = dashboard ? document.getElementById('report-status') : null;
+  const field = dashboard ? document.getElementById('report-field') : null;
+  // Reuse the recorded changes. Keys alone are not unique across files/records.
+  const pathsByRecord = new Map(), fieldCounts = new Map();
+  if (field) {
+    for (const row of all) {
+      if (!row.groups.includes('changes') || typeof row['위치'] !== 'string') continue;
+      const path = row['위치'];
+      if (!row.link || !pathsByRecord.get(row.link)?.has(path))
+        fieldCounts.set(path, (fieldCounts.get(path) || 0) + 1);
+      if (row.link) {
+        if (!pathsByRecord.has(row.link)) pathsByRecord.set(row.link, new Set());
+        pathsByRecord.get(row.link).add(path);
+      }
+    }
+    const fragment = document.createDocumentFragment(), any = document.createElement('option');
+    any.value = ''; any.textContent = fieldCounts.size ? '모든 변경 필드' : '변경된 필드 없음';
+    fragment.append(any);
+    for (const path of [...fieldCounts.keys()].sort((a, b) => a.localeCompare(b))) {
+      const option = document.createElement('option');
+      // @root cannot collide with a non-empty JSON Pointer (which starts with /).
+      option.value = path || '@root';
+      option.textContent = `${path || '레코드 전체'} · ${fieldCounts.get(path).toLocaleString()}건`;
+      fragment.append(option);
+    }
+    field.replaceChildren(fragment); field.disabled = !fieldCounts.size;
+  }
   let filtered = all, page = 1, timer;
   function state() {
-    return new URLSearchParams({q: search.value, size: size.value, page: String(page), ...(dashboard ? {group: category.value, status: status.value} : {})});
+    return new URLSearchParams({q: search.value, size: size.value, page: String(page), ...(dashboard ? {group: category.value, status: status.value} : {}), ...(field && field.value ? {field: field.value} : {})});
   }
   function render() {
     const amount = Number(size.value), pages = Math.max(1, Math.ceil(filtered.length / amount));
@@ -84,7 +110,10 @@ SCRIPT = r"""
   }
   function filter() {
     const query = search.value.trim().toLowerCase();
+    const path = field && field.value === '@root' ? '' : field && field.value;
     filtered = indexed.filter(item => (!dashboard || item.row.groups.includes(category.value)) &&
+      (!field || !field.value || (item.row.groups.includes('changes')
+        ? item.row['위치'] === path : pathsByRecord.get(item.row.link)?.has(path))) &&
       (!dashboard || !status.value || item.row.status === status.value) && (!query || item.text.includes(query))).map(item => item.row);
     if (dashboard) {
       document.getElementById('list-title').textContent = category.options[category.selectedIndex].text;
@@ -98,10 +127,12 @@ SCRIPT = r"""
     if (dashboard) {
       category.value = Array.from(category.options).some(o => o.value === params.get('group')) ? params.get('group') : 'output';
       status.value = Array.from(status.options).some(o => o.value === params.get('status')) ? params.get('status') : '';
+      if (field) field.value = Array.from(field.options).some(o => o.value === params.get('field')) ? params.get('field') : '';
     }
     page = Number(params.get('page')) || 1; filter(); render();
   }
   if (dashboard) {
+    if (field) field.addEventListener('change', () => { page = 1; filter(); render(); });
     category.addEventListener('change', () => { page = 1; status.value = ''; filter(); render(); });
     status.addEventListener('change', () => { page = 1; filter(); render(); });
     document.querySelectorAll('[data-group]').forEach(node => node.addEventListener('click', event => {

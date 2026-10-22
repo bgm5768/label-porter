@@ -95,6 +95,9 @@ class App(Workflow):
             b.pack(fill="x", padx=10, pady=3)
             self.nav_buttons.append(b)
         tk.Label(sidebar, text=f"원본 보존 · 누락 항목 유지\n\nv{__version__}", justify="left", bg=ttk.SURFACE, fg=MUTED, font=("맑은 고딕", 9)).pack(side="bottom", anchor="w", padx=22, pady=24)
+        self.update_button = ttk.Button(sidebar, text="프로그램 업데이트", anchor="w", command=self._show_updates)
+        self.update_button.configure(border_width=0)
+        self.update_button.pack(side="bottom", fill="x", padx=10, pady=(0, 10))
         self.viewer_button = ttk.Button(sidebar, text="JSON 뷰어", anchor="w",
                                        font=("맑은 고딕", 11), command=self._json_viewer)
         self.viewer_button.configure(border_width=0)
@@ -228,6 +231,12 @@ class App(Workflow):
         self.capabilities_box = self._document_view(capabilities, self.capabilities_text)
         self.architecture_box = self._document_view(architecture, self.architecture_text)
         card_content(self.help_host)
+        from .update_ui import UpdatePanel
+        self.update_host = ttk.Card(self.content, padding=12)
+        self.update_page = ScrollPage(self.update_host)
+        self.update_page.pack(fill="both", expand=True)
+        self.updater = UpdatePanel(self.update_page.body, self)
+        self.updater.pack(fill="both", expand=True)
 
     @staticmethod
     def _table(parent, columns, height):
@@ -281,6 +290,7 @@ class App(Workflow):
             return
         self.route, self.current_step = "workflow", index
         self.help_host.pack_forget(); self.help_return = None
+        self.update_host.pack_forget()
         self.mapping_host.pack_forget()
         self.builder_host.pack_forget()
         self.steps.pack(fill="both", expand=True); self.steps.tab(index, state="normal"); self.steps.select(index)
@@ -292,6 +302,7 @@ class App(Workflow):
         self._sync_actions()
 
     def _sync_actions(self):
+        self.update_button.configure(state="disabled" if self.running or (self.builder and self.builder.busy) else "normal")
         # Disabling a selected native Notebook tab silently switches its page.
         # Keep an already-open failure/result page visible; navigation into it
         # is still guarded by _advance_review and the disabled sidebar action.
@@ -386,6 +397,7 @@ class App(Workflow):
         if self.route != "help":
             self.help_return = (self.route, self.page_title.get(), self.page_caption.get(), self.status.get())
         self.steps.pack_forget(); self.mapping_host.pack_forget(); self.builder_host.pack_forget()
+        self.update_host.pack_forget()
         self.help_host.pack(fill="both", expand=True)
         self.route = "help"
         self.tabs.select(tab)
@@ -394,9 +406,18 @@ class App(Workflow):
         self.status.set("작업의 입력값과 프리뷰 상태를 유지하고 있습니다.")
         self._sync_actions()
 
+    def _show_updates(self):
+        if self.running or (self.builder and self.builder.busy): return
+        self._show_tools(1)
+        self.help_host.pack_forget()
+        self.update_host.pack(fill="both", expand=True)
+        self.page_title.set("프로그램 업데이트")
+        self.page_caption.set("GitHub 정식 릴리스를 확인하고 원하는 시점에 설치하세요.")
+
     def _return_from_help(self):
         if self.route != "help" or not self.help_return: return
         self.help_host.pack_forget()
+        self.update_host.pack_forget()
         self.route, title, caption, status = self.help_return
         self.help_return = None
         (self.builder_host if self.route == "builder" else self.mapping_host if self.route == "mapping" else self.steps).pack(fill="both", expand=True)
@@ -709,7 +730,8 @@ class App(Workflow):
                  "rule_file": self.rule_file.get(), "config": self._get_config() if self._config_text else None}
             self.settings_path.parent.mkdir(parents=True, exist_ok=True)
             temp = self.settings_path.with_suffix(".tmp"); temp.write_text(json.dumps(s, ensure_ascii=False), encoding="utf-8"); os.replace(temp, self.settings_path)
-        except (OSError, ValueError, TypeError): pass
+            return True
+        except (OSError, ValueError, TypeError): return False
 
     def _destroyed(self, event):
         if event.widget is not self.root: return
@@ -733,7 +755,9 @@ class App(Workflow):
 def main():
     # CTk owns DPI awareness; setting Tk's older system-only mode first prevents
     # CTk from enabling its per-monitor scaling on Windows.
-    root = ttk.create_root(); App(root); root.mainloop()
+    root = ttk.create_root(); app = App(root)
+    app.updater.startup()
+    root.mainloop()
 
 
 if __name__ == "__main__": main()

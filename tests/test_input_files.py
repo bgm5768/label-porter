@@ -112,14 +112,16 @@ class FileBrowserTests(unittest.TestCase):
         browser = self.viewer.browser
         browser.set_inputs([self.base])
         self.until(lambda: len(browser.paths) == 105 and not self.viewer.loading and bool(self.viewer.values))
-        self.assertEqual(len(browser.table.get_children()), 100)
-        browser.move(1); self.assertEqual(len(browser.table.get_children()), 5)
+        folder = browser.table.get_children()[0]
+        self.assertEqual(len(browser.table.get_children(folder)), 100)
+        browser.move(1)
+        self.assertEqual(len(browser.table.get_children(browser.table.get_children()[0])), 5)
         browser.table.selection_set('104')
         self.until(lambda: self.viewer.path.get().endswith('item-104.json') and not self.viewer.loading)
         root = self.viewer.tree.get_children()[0]
         self.assertEqual(self.viewer.values[root][0], {'index': 104})
         browser.query.set('ITEM-042'); browser.filter()
-        self.assertEqual(len(browser.table.get_children()), 1)
+        self.assertEqual(len(browser.table.get_children(browser.table.get_children()[0])), 1)
         browser.table.selection_set('42')
         self.until(lambda: self.viewer.path.get().endswith('item-042.json') and not self.viewer.loading)
         browser.query.set('not-present'); browser.filter()

@@ -42,6 +42,7 @@ settings.json
 *.pem
 *.key
 credentials.json
+*.dpapi
 .idea/
 .vscode/
 Thumbs.db

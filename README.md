@@ -1,6 +1,6 @@
 # 라벨 포터
 
-**버전 관리 기준: v1 (2026-10-20)** — 프로그램 2.4.0을 첫 Git 기준 버전으로 보관합니다. `v1` 태그로 이 상태를 다시 확인할 수 있습니다. 현재 프로그램은 **2.25.3**이며 변경 내역은 [CHANGELOG.md](CHANGELOG.md)에 기록합니다.
+**버전 관리 기준: v1 (2026-10-20)** — 프로그램 2.4.0을 첫 Git 기준 버전으로 보관합니다. `v1` 태그로 이 상태를 다시 확인할 수 있습니다. 현재 프로그램은 **2.25.4**이며 변경 내역은 [CHANGELOG.md](CHANGELOG.md)에 기록합니다.
 
 플랫폼 DB에 접근하지 않고, 어드민에서 내려받은 작업 결과를 원본 라벨링 JSON에 반영하는 Windows 데스크톱 프로그램입니다. 모든 데이터 처리는 로컬에서 이루어집니다. 외부 서비스나 AI 호출이 없습니다.
 
@@ -12,13 +12,13 @@
 
 ## 처리 결과서
 
-집계 카드를 누르면 작업 결과·처리 완료·원본·보완·변경 필드·검토/오류·짝이 없는 데이터·조건 제외·파일 오류 목록으로 이동합니다. 분류 및 상태 필터, 전체 검색, 25/50/100건 페이지 이동을 함께 사용합니다. 정상 완료 항목도 상세 비교에서 원본·보완·출력 JSON과 변경 전후 값을 확인할 수 있습니다.
+집계 카드를 누르면 작업 결과·처리 완료·원본·보완·변경 필드·검토/오류·짝이 없는 데이터·조건 제외·파일 오류 목록으로 이동합니다. 분류 및 상태 필터, 변경된 필드 드롭다운, 전체 검색, 25/50/100건 페이지 이동을 함께 사용합니다. 필드 목록은 실제 변경 기록에서 만들며 필드별 원본 레코드 수를 표시합니다. 필드를 선택하면 해당 변경이 있는 레코드만 보이고, 변경 필드 분류에서는 해당 경로의 변경 행만 보입니다. 상세 비교 후 돌아와도 선택한 필터와 페이지가 유지됩니다. 정상 완료 항목도 상세 비교에서 원본·보완·출력 JSON과 변경 전후 값을 확인할 수 있습니다.
 
 작업 결과는 원본을 기준으로 처리 상태가 확정된 레코드입니다. 완료는 검토 사유 없이 반영되었거나 값이 같은 레코드입니다. 변경 필드는 규칙이 기록한 변경 경로 수이며 목록 전체 교체는 1개로 집계합니다. 원본/보완은 서로 다른 입력이고 오류는 양쪽에 기록될 수 있어 카드를 합산하지 않습니다. 보고서는 인터넷 없이 동작하며 `reports` 폴더 전체를 함께 보관하세요.
 
 ## 실행
 
-- Windows 실행 파일: `dist/v2.25.3/LabelPorter.exe`를 더블클릭합니다. Python 설치가 필요하지 않습니다.
+- Windows 실행 파일: `dist/v2.25.4/LabelPorter.exe`를 더블클릭합니다. Python 설치가 필요하지 않습니다.
 - 소스 실행: Python 3.11 이상에서 `python -m label_porter` 또는 `start.cmd`를 실행합니다. 먼저 `python -m pip install -r requirements.txt`로 CustomTkinter와 문서 뷰어 의존성을 설치합니다. Windows 공식 Python의 Tkinter 위에 CustomTkinter 화면을 구성합니다. 실행 파일에는 문서 뷰어가 내장되어 별도 설치가 필요 없습니다.
 - 상세 규칙 설명: [사용설명.md](사용설명.md)
 - 후처리 가능 수준과 제한: [후처리_지원범위.md](후처리_지원범위.md) — 프로그램의 사용 방법 화면에도 포함됩니다.
@@ -150,9 +150,32 @@ Windows 단일 실행 파일 빌드:
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt pyinstaller==6.22.3
-.\.venv\Scripts\python.exe -m PyInstaller --noconfirm --clean --distpath 'dist\v2.25.3' --workpath 'build\v2.25.3' LabelPorter.spec
-Copy-Item -LiteralPath '사용설명.md','AI_규칙작성_가이드.md','후처리_지원범위.md','아키텍처_및_규칙엔진.md','THIRD_PARTY_NOTICES.txt' -Destination 'dist\v2.25.3'
+.\.venv\Scripts\python.exe -m PyInstaller --noconfirm --clean --distpath 'dist\v2.25.4' --workpath 'build\v2.25.4' LabelPorter.spec
+Copy-Item -LiteralPath '사용설명.md','AI_규칙작성_가이드.md','후처리_지원범위.md','아키텍처_및_규칙엔진.md','THIRD_PARTY_NOTICES.txt' -Destination 'dist\v2.25.4'
 ```
+
+## 버전 갱신과 GitHub 자동 업데이트
+
+기능 수정·일반 빌드·Git 커밋만으로는 버전을 올리거나 업데이트를 게시하지 않습니다. 배포 담당자가 다음 순서를 명시적으로 실행합니다. 아래 `2.26.0`은 예시이며 현재보다 높은 버전을 선택합니다.
+
+```powershell
+# 먼저 배포할 소스·테스트·문서 변경을 검토하고 커밋합니다.
+.\.venv\Scripts\python.exe scripts/release.py prepare --version 2.26.0
+# 갱신된 버전·CHANGELOG·문서를 검토하고 커밋합니다.
+.\.venv\Scripts\python.exe scripts/release.py build
+.\.venv\Scripts\python.exe scripts/release.py publish
+```
+
+- `prepare`: 추적 중인 변경이 없는 상태에서 버전과 문서를 갱신합니다. 자동 커밋은 하지 않습니다.
+- `build`: 현재 커밋의 파일만 별도 작업 폴더로 꺼내 테스트·Mermaid 검사·실행 파일 빌드·자체 검사를 수행합니다. `dist/v버전`에 실행 파일, 문서, ZIP, `LabelPorter-update.json`을 만듭니다. 기존 배포 폴더는 덮어쓰지 않습니다. 로컬 데이터나 추적되지 않은 파일은 빌드에 들어가지 않습니다.
+- `publish`: 비공개 `bgm5768/label-porter` 저장소와 `main`을 확인하고 커밋·태그를 push합니다. GitHub 초안에 ZIP과 업데이트 명세를 모두 업로드한 뒤 정식 릴리스로 게시합니다. 업로드 실패 시 초안으로 남아 사용자의 업데이트 목록에 노출되지 않습니다. 이미 게시된 릴리스·다른 커밋의 태그는 덮어쓰지 않습니다.
+- `status`: 버전과 작업 폴더 상태를 확인합니다. 어떤 명령도 실제 라벨 데이터를 업로드하지 않습니다.
+
+유지보수 PC는 Git 인증 또는 `LABEL_PORTER_GITHUB_TOKEN` 환경 변수로 인증합니다. 게시 계정에는 저장소 Contents 쓰기 권한이 필요합니다. 사용자 PC에는 Contents 읽기 권한만 있으면 됩니다. 토큰을 코드·EXE·규칙·배포 파일에 넣지 마세요.
+
+자동 업데이트를 지원하지 않는 기존 EXE는 **최초 한 번 새 실행 파일로 교체**해야 합니다. 이후에는 프로그램의 **프로그램 업데이트** 화면에서 정식 릴리스를 확인하고 적용합니다. 개발 중인 실행 파일은 `dist/development/LabelPorter.exe`이며 정식 릴리스 게시와는 별개입니다.
+
+GitHub API 기준: [릴리스](https://docs.github.com/en/rest/releases/releases), [릴리스 파일 다운로드·권한](https://docs.github.com/en/rest/releases/assets).
 
 ## 저장소에 포함하는 파일
 

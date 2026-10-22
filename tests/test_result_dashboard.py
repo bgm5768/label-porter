@@ -66,6 +66,9 @@ class DashboardTests(unittest.TestCase):
     def test_completed_details_and_all_input_results_have_working_links(self):
         outcome = self.execute()
         directory = outcome.directory / "reports"
+        page = (directory / "report.html").read_text(encoding="utf-8")
+        self.assertIn('id="report-field"', page)
+        self.assertIn('id="report-field-hint"', page)
         catalog = json.loads((directory / "catalog.json").read_text(encoding="utf-8"))
         self.assertEqual(sum("result" in r["groups"] for r in catalog), 6)
         self.assertEqual(sum("completed" in r["groups"] for r in catalog), 2)

@@ -36,6 +36,7 @@ main{max-width:1480px;margin:auto;padding:36px}a{color:var(--accent);text-decora
 .tabs{display:flex;gap:8px;flex-wrap:wrap;border-bottom:1px solid var(--line);padding-bottom:16px;margin-bottom:18px}
 .tabs a{border:1px solid var(--line);border-radius:7px;padding:8px 12px;color:var(--muted)}.tabs a[aria-current=true]{color:var(--accent);background:#eff3ff;border-color:#b8c8f4}
 .filters{display:flex;gap:12px;flex-wrap:wrap}.filters label{display:flex;flex-direction:column;gap:5px}
+.field-filter{flex:1;min-width:220px;max-width:620px}.field-filter select{width:100%;min-width:0}
 select,input,button{font:inherit;color:inherit;border:1px solid #cbd4df;background:white;border-radius:6px;padding:7px 10px}
 table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:13px 12px;border-bottom:1px solid var(--line);overflow-wrap:anywhere;vertical-align:top}
 th{background:#f6f8fb;color:#52657c;font-size:12px}tbody tr:hover{background:#fafbfe}
@@ -113,7 +114,8 @@ def write_dashboard(directory, summary, catalog, examples):
 검토/오류는 입력 쪽별 기록이며 중복 KEY는 원본과 보완 양쪽에 표시됩니다. 해석 실패 파일은 레코드 수에 포함할 수 없습니다.</p>
 <section class="panel" id="records"><div class="section-head"><h2 id="list-title">작업 결과 레코드</h2><a href="records.csv">처리 상태 CSV 열기 ↗</a></div>
 <nav class="tabs" id="report-categories" aria-label="처리 목록 분류">{tabs}</nav>
-<div class="filters"><label>데이터 분류<select id="report-category">{options}</select></label><label>처리 상태<select id="report-status"><option value="">모든 상태</option>{statuses}</select></label></div>
+<div class="filters"><label>데이터 분류<select id="report-category">{options}</select></label><label>처리 상태<select id="report-status"><option value="">모든 상태</option>{statuses}</select></label><label class="field-filter">변경된 필드<select id="report-field" aria-describedby="report-field-hint"><option value="">모든 변경 필드</option></select></label></div>
+<p class="muted" id="report-field-hint">변경 기록에서 감지된 필드만 표시합니다. 건수는 필드별 전체 원본 레코드 수이며, 선택하면 현재 분류·상태·검색과 함께 적용됩니다. 목록 전체 교체는 목록 경로로 표시합니다.{ ' 미리보기에서는 변경 예정 기준입니다.' if preview else ''}</p>
 {controls}<div class="table-scroll"><table id="review-table"><thead><tr><th>처리 상태</th><th>원본 파일</th><th>보완 파일</th><th>KEY</th><th>레코드 / 필드 위치</th><th>처리 내용 · 변경 전후</th><th>상세</th></tr></thead><tbody id="review-list"></tbody></table></div>{PAGER}
 <p class="muted">전체 목록을 검색하고 현재 페이지의 행만 표시합니다. ‘상세 비교’에서 원본·보완·출력 JSON과 변경 필드·검토 사유를 확인하세요. { '미리보기의 출력은 저장 전 상태이며, 후보 JSON이 반영 예정 값입니다.' if preview else ''}</p></section>
 <section class="panel"><h2>저장 위치와 데이터 분류 · {partition_state}</h2><p class="path">{e(summary['run_directory'])}</p>

@@ -4,6 +4,10 @@ import tempfile
 import traceback
 from pathlib import Path
 
+if len(sys.argv) == 3 and sys.argv[1] == '--apply-update':
+    from label_porter.update_install import helper_main
+    raise SystemExit(helper_main(sys.argv[2]))
+
 from label_porter.gui import App, main
 
 
@@ -20,6 +24,16 @@ def self_test(output):
             app = App(root)
         app._save_settings = lambda: None  # Self-tests must never alter the user's working project.
         root.update_idletasks()
+        app._show_updates(); root.update_idletasks()
+        assert app.page_title.get() == '프로그램 업데이트'
+        assert not app.updater.busy  # Self-tests never start network checks.
+        app._back()
+        if getattr(sys, 'frozen', False) and sys.platform == 'win32':
+            import os
+            from label_porter.update_install import _parent_handle
+            kernel, handle = _parent_handle(os.getpid(), Path(sys.executable).resolve())
+            try: assert kernel.WaitForSingleObject(handle, 0) == 258
+            finally: kernel.CloseHandle(handle)
         rule_path, config = next((path, rule_config) for path, rule_config in app.bundled_rules.values() if path.stem == "generic")
         assert len(app.bundled_rules) == 4
         assert len(app.tabs.tabs()) == 4
