@@ -258,6 +258,15 @@ class Workflow:
         if self.last_run:
             webbrowser.open((self.last_run / "reports" / "report.html").as_uri())
 
+    def _open_excel_report(self):
+        if self.last_run:
+            path = self.last_run / "reports" / "report.xlsx"
+            if path.is_file():
+                if hasattr(os, "startfile"):
+                    os.startfile(str(path))
+                else:
+                    webbrowser.open(path.as_uri())
+
     def _open_folder(self):
         if self.last_run:
             if hasattr(os, "startfile"):

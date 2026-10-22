@@ -16,6 +16,7 @@ from .formats import DataError, atomic_text
 from .input_check import inspect_inputs
 from .reports import STATUS
 from .result_dashboard import write_dashboard
+from .excel_report import write_excel_report
 from .storage import now, output_session
 
 
@@ -273,6 +274,7 @@ class PreparedSession:
                     checkpoint()
                     summary.update(status=self.result.summary['status'], finished_at=now().isoformat(timespec='seconds'))
                     catalog = json.loads((destination / 'reports/catalog.json').read_text(encoding='utf-8'))
+                    write_excel_report(destination / 'reports', summary, catalog)
                     write_dashboard(destination / 'reports', summary, catalog, [])
                     atomic_text(destination / 'reports/summary.json', json.dumps(summary, ensure_ascii=False, indent=2))
                     checkpoint()

@@ -208,7 +208,8 @@ class App(Workflow):
         self.status_table = self._table(review, (("구분", 100), ("처리 결과", 420), ("건수", 90)), 5)
         links = ttk.Frame(review); links.pack(fill="x", pady=(0, 12))
         self.preview_button = ttk.Button(links, text="전체 데이터 다시 검증", command=lambda: self._start(True)); self.preview_button.pack(side="left")
-        self.report_button = ttk.Button(self.footer_actions, text="처리 결과서 열기", command=self._open_report, state="disabled")
+        self.report_button = ttk.Button(self.footer_actions, text="HTML 결과서 열기", command=self._open_report, state="disabled")
+        self.excel_button = ttk.Button(self.footer_actions, text="Excel 결과서 열기", command=self._open_excel_report, state="disabled")
         self.folder_button = ttk.Button(self.footer_actions, text="결과 폴더", command=self._open_folder, state="disabled")
         # Execution code can disable this action, while the footer provides the current label.
         self.run_button = self.primary_button
@@ -318,7 +319,7 @@ class App(Workflow):
                                        state="disabled" if builder.busy else "normal")
             self.primary_button.grid()
             self.primary_button.configure(text=builder.next_title, state="normal" if builder.can_next else "disabled")
-            for button in (self.cancel_button, self.report_button, self.folder_button): button.pack_forget()
+            for button in (self.cancel_button, self.report_button, self.excel_button, self.folder_button): button.pack_forget()
             for i, button in enumerate(self.nav_buttons):
                 button.configure(state="normal" if i == 0 and not builder.busy else "disabled",
                                  bg=ttk.SELECTED if i == 0 else ttk.SURFACE, fg=ttk.SELECTED_INK if i == 0 else INK)
@@ -329,7 +330,7 @@ class App(Workflow):
         self.back_button.configure(text="← 작업으로 돌아가기" if helping else "← 이전 단계",
                                    state="disabled" if self.running or (self.current_step == 0 and not helping) else "normal")
         self.cancel_button.configure(state="normal" if self.running and not self.cancel_event.is_set() else "disabled")
-        for button in (self.cancel_button, self.report_button, self.folder_button): button.pack_forget()
+        for button in (self.cancel_button, self.report_button, self.excel_button, self.folder_button): button.pack_forget()
         for i, button in enumerate(self.nav_buttons):
             active = i == self.current_step and not helping
             button.configure(state="disabled" if self.running or (i > 0 and not self.rule_ready) or (i == 3 and not self._session_ready()) else "normal",
@@ -343,7 +344,7 @@ class App(Workflow):
         self.primary_button.grid()
         if self.running: self.cancel_button.pack(side="left", padx=(0, 8))
         if self.current_step == self.review_step:
-            self.report_button.pack(side="left", padx=(0, 8)); self.folder_button.pack(side="left")
+            self.report_button.pack(side="left", padx=(0, 8)); self.excel_button.pack(side="left", padx=(0, 8)); self.folder_button.pack(side="left")
         title = "다음 단계 →" if self.current_step < self.review_step else "복사본 저장" if self.preview_fingerprint else "전체 데이터 검증"
         if self.current_step == self.review_step and self._saved(): title = "결과 폴더 열기"
         if self.current_step == 2:
@@ -520,6 +521,7 @@ class App(Workflow):
         self.status_table.delete(*self.status_table.get_children())
         self.review_note.set('4단계에서 전체 데이터를 검증해 주세요.')
         self.report_button.configure(state='disabled')
+        self.excel_button.configure(state='disabled')
         self.folder_button.configure(state='disabled')
         self._sync_actions()
 
@@ -690,6 +692,7 @@ class App(Workflow):
                 else:
                     self.last_run = payload.directory; summary = self.last_summary = payload.summary
                     self.report_button.configure(state="normal"); self.folder_button.configure(state="normal")
+                    self.excel_button.configure(state="normal" if (payload.directory/'reports'/'report.xlsx').is_file() and not summary.get('error', '').startswith('Excel 결과서 저장 실패') else "disabled")
                     if (summary.get("preview") and summary["status"].startswith("completed")
                             and self.active_request == self._input_request()):
                         self.preview_fingerprint = self.active_fingerprint

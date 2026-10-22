@@ -128,6 +128,7 @@ def self_test(output):
             while app.running and time.monotonic() < deadline:
                 root.update(); time.sleep(.01)
             assert app.preview_fingerprint and app.last_summary['preview']
+            assert (app.last_run / 'reports/report.xlsx').is_file()
             assert not (app.last_run/'data').exists()
             assert app.primary_button['text'] == '복사본 저장'
             app.primary_button.invoke()
@@ -135,6 +136,8 @@ def self_test(output):
             while app.running and time.monotonic() < deadline:
                 root.update(); time.sleep(.01)
             assert app._saved(), app.status.get()
+            assert (app.last_run / 'reports/report.xlsx').is_file()
+            assert str(app.excel_button['state']) == 'normal'
             assert json.loads((app.last_run / 'data/one.json').read_text(encoding='utf-8')) == editor.preview.pair['output']
             from label_porter.mapping import load_samples, preview_rule, import_rule, compile_rule
             for _, rule_config in app.bundled_rules.values():

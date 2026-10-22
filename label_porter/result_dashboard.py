@@ -123,7 +123,10 @@ def write_dashboard(directory, summary, catalog, examples):
         # Link only real files/directories; a preview creates reports alone.
         name = e(folder) if preview or not (directory.parent / folder).exists() else f'<a href="../{folder}">{e(folder)}</a>'
         storage += f"<tr><td>{name}</td><td>{hint}</td><td>{count:,}</td></tr>"
+    has_excel = (directory / "report.xlsx").is_file() and not summary.get("error", "").startswith("Excel 결과서 저장 실패")
+    excel_download = (("report.xlsx", "Excel 결과서", "요약·라벨 수·전체 목록·변경 필드·검토 사유·전후 JSON"),) if has_excel else ()
     downloads = (
+        *excel_download,
         ("records.csv", "처리 상태 CSV", "원본 처리 상태와 연결 오류 · 엑셀용"),
         ("catalog.json", "전체 목록 JSON", "원본·보완·변경 필드 등 모든 분류의 검색 목록"),
         ("record_details.jsonl", "레코드 상세 JSONL", "원본·보완·출력 JSON과 상세 처리 내용"),
@@ -141,6 +144,7 @@ def write_dashboard(directory, summary, catalog, examples):
     doc = f'''<!doctype html><html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>처리 결과서 · {e(rule_name)}</title><style>{STYLE}{CSS}</style></head><body><main>
 <header class="hero"><div><div class="eyebrow">LABEL PORTER / PROCESSING REPORT</div><h1>라벨 데이터 처리 결과서</h1><p>{e(rule_name)}</p></div><span class="badge {badge}">{state}</span></header>
+{ '<p><a href="report.xlsx" download>Excel 결과서 내려받기 ↗</a></p>' if has_excel else '' }
 <div class="run-info"><b>{mode}</b><span class="muted">{e(summary['started_at'])} → {e(summary.get('finished_at',''))}</span><span>원본 보존 · 로컬 처리</span></div>
 <div class="notice">{e(notice)}</div><nav class="cards" aria-label="분류별 집계">{cards}</nav>
 <p class="muted">카드를 누르면 해당 목록으로 이동합니다. 원본과 보완은 서로 다른 입력 집계이며, 처리 완료·검토·변경 필드 등은 서로 겹칠 수 있어 전체 카드를 합산하지 않습니다.

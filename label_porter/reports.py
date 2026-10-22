@@ -15,6 +15,7 @@ from .result_dashboard import write_dashboard
 from .examine import category_for, label_path, ResultArchive
 from .json_display import json_prefix
 from .label_counts import LabelCounts
+from .excel_report import write_excel_report
 
 
 STATUS = {
@@ -261,5 +262,14 @@ class Reports:
                         *[counts[key] for key in ("records", "arrays", "items", "missing", "non_array", "unavailable")],
                         row["delta"] if side == "output" and row["delta"] is not None else ""])
         atomic_text(self.directory / "summary.json", json.dumps(summary, ensure_ascii=False, indent=2))
+        try:
+            write_excel_report(self.directory, summary, self.catalog)
+        except Exception as exc:
+            try:
+                (self.directory / "report.xlsx").unlink(missing_ok=True)
+            except OSError:
+                pass  # A workbook already open in Excel may be locked; the report hides it.
+            summary.update(status="failed", error=f"Excel 결과서 저장 실패: {exc}")
+            atomic_text(self.directory / "summary.json", json.dumps(summary, ensure_ascii=False, indent=2))
         write_dashboard(self.directory, summary, self.catalog, self.examples)
         return summary

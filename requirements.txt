@@ -5,3 +5,4 @@ tkinterweb-tkhtml==2.2.2
 customtkinter==5.2.2
 darkdetect==0.8.0
 Pillow==13.0.0
+XlsxWriter==3.3.0
