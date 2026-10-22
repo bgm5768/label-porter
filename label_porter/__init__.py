@@ -1,3 +1,3 @@
 """File-based, non-destructive annotation result porter."""
 
-__version__ = "2.25.4"
+__version__ = "2.26.0"
