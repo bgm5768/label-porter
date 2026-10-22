@@ -41,6 +41,7 @@ select,input,button{font:inherit;color:inherit;border:1px solid #cbd4df;backgrou
 table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:13px 12px;border-bottom:1px solid var(--line);overflow-wrap:anywhere;vertical-align:top}
 th{background:#f6f8fb;color:#52657c;font-size:12px}tbody tr:hover{background:#fafbfe}
 #review-table{min-width:1080px}#review-table th:nth-child(1){width:12%}#review-table th:nth-child(2),#review-table th:nth-child(3){width:16%}
+#label-counts table{min-width:1000px}#label-counts td:first-child{max-width:300px}
 #review-table th:nth-child(4){width:10%}#review-table th:nth-child(5){width:10%}#review-table th:nth-child(6){width:26%}#review-table th:nth-child(7){width:10%}
 #review-table td:nth-child(2),#review-table td:nth-child(3){font-size:12px}#review-table td:nth-child(6){max-height:200px}
 .notice{border-left:3px solid #cb9c36;padding:12px 16px;background:#fff9e9;margin:16px 0}.downloads{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
@@ -51,6 +52,38 @@ footer{color:var(--muted);font-size:12px;margin:24px 0}
 @media(max-width:1000px){main{padding:20px}.cards{grid-template-columns:repeat(2,1fr)}.downloads{grid-template-columns:1fr 1fr}}
 @media(max-width:600px){main{padding:12px}.hero{display:block}.cards,.downloads{grid-template-columns:1fr}.panel{padding:16px}}
 """
+
+
+def label_count_panel(summary):
+    e = lambda value: html.escape(str(value), quote=True)
+    rows = summary.get("label_counts", [])
+    if not rows:
+        return '<section class="panel"><h2>라벨 수 집계</h2><p class="muted">이번 규칙에서 집계할 라벨 배열을 찾지 못했습니다. 문자열·숫자 필드와 레코드 수는 라벨 수로 세지 않습니다.</p></section>'
+
+    def cell(counts):
+        problems = [("경로 누락", counts["missing"]), ("배열 아님", counts["non_array"]),
+                    ("자동 집계 불가", counts["unavailable"])]
+        notes = " · ".join(f"{label} {n:,}" for label, n in problems if n)
+        number = f'{counts["items"]:,}' if not notes or counts["arrays"] else "—"
+        return f'<td><b>{number}</b><br><small>레코드 {counts["records"]:,}건{(" · 확인된 항목만 집계<br>" + notes) if notes else ""}</small></td>'
+
+    body = ""
+    for row in rows:
+        count = row["counts"]
+        delta = "확인 필요" if row["delta"] is None else f'{row["delta"]:+,}'
+        path = e(row["path"])
+        incoming = e(row["result_path"]) if row["result_path"] is not None else "변환·다중 연결·참조 규칙: 입력 배열 자동 집계 불가"
+        body += f'<tr><td><b class="path">{path}</b><br><small class="path">보완: {incoming}</small></td>'
+        body += "".join(cell(count[side]) for side in ("source", "result", "output", "completed", "examine"))
+        body += f'<td><b>{delta}</b><br><small>처리 전 {count["output_before"]["items"]:,}개 기준</small></td></tr>'
+    return f'''<section class="panel" id="label-counts"><div class="section-head"><h2>라벨 수 집계 · 목록별 항목 수</h2><a href="label_counts.csv">라벨 집계 CSV 열기 ↗</a></div>
+<p>규칙이 다루는 배열의 항목을 1개씩 셉니다. 어절·발음 태그 등 서로 다른 종류와 상위·하위 목록은 합산하지 않습니다. 변경 필드 수와도 별개입니다.</p>
+<div class="table-scroll"><table><thead><tr><th>라벨 목록 / 연결 경로</th><th>원본 입력</th><th>보완 입력</th><th>{'반영 예정' if summary['preview'] else '처리 후'}</th><th>정상 처리</th><th>examine 대상</th><th>증감</th></tr></thead><tbody>{body}</tbody></table></div>
+<p class="muted">입력은 읽은 레코드 전체(짝 없음·중복·키 오류 포함), 처리 후는 처리 상태가 확정된 원본 레코드 기준입니다. 정상 처리 + examine 대상 = 처리 후입니다.
+증감은 같은 처리 대상의 원본과 출력 항목 수 차이이며, 값이 바뀐 라벨 수가 아닙니다. 검토·조건 제외·짝 없는 원본은 보존된 값으로 셉니다.
+{'미리보기는 검증 통과한 후보의 저장 예정 개수이며 파일을 저장하지 않습니다.' if summary['preview'] else '전체 data 복사본 기준이며 examine에 보관한 보완 입력을 출력에 더하지 않습니다.'}
+빈 배열은 0개, 누락·잘못된 형식은 확인 필요로 표시합니다. 변환식 등 입력 경로를 확정할 수 없는 경우 보완 개수를 추측하지 않습니다.
+파일 해석 실패는 집계에서 제외되며 중단·실패 시에는 확인된 부분만 표시합니다. 규칙에 없는 목록은 집계하지 않습니다.</p></section>'''
 
 
 def write_dashboard(directory, summary, catalog, examples):
@@ -97,6 +130,7 @@ def write_dashboard(directory, summary, catalog, examples):
         ("changes.jsonl", "변경 전후 JSONL", "필드별 변경 전후 값 전체"),
         ("review_details.jsonl", "검토 근거 JSONL", "검토 항목의 모든 사유와 근거"),
         ("summary.json", "처리 집계 JSON", "범위별 집계와 실행 정보"),
+        ("label_counts.csv", "라벨 수 집계 CSV", "목록별 원본·보완·처리 후 개수와 증감"),
         ("../" + rule_file, "사용한 규칙", "이번 실행에 적용한 규칙"),
         ("../manifest.json", "파일 확인 명세", "입력·결과 경로와 파일 해시"),
         ("held_references.jsonl", "별도 보관 태그", "규칙에서 별도 검토로 지정한 태그"),
@@ -112,6 +146,7 @@ def write_dashboard(directory, summary, catalog, examples):
 <p class="muted">카드를 누르면 해당 목록으로 이동합니다. 원본과 보완은 서로 다른 입력 집계이며, 처리 완료·검토·변경 필드 등은 서로 겹칠 수 있어 전체 카드를 합산하지 않습니다.
 짝이 없는 데이터: 보완 결과 없는 원본 <b>{summary.get('unmatched_source_records',0):,}</b>건 / 원본 없는 보완 <b>{summary.get('unmatched_result_records',0):,}</b>건.
 검토/오류는 입력 쪽별 기록이며 중복 KEY는 원본과 보완 양쪽에 표시됩니다. 해석 실패 파일은 레코드 수에 포함할 수 없습니다.</p>
+{label_count_panel(summary)}
 <section class="panel" id="records"><div class="section-head"><h2 id="list-title">작업 결과 레코드</h2><a href="records.csv">처리 상태 CSV 열기 ↗</a></div>
 <nav class="tabs" id="report-categories" aria-label="처리 목록 분류">{tabs}</nav>
 <div class="filters"><label>데이터 분류<select id="report-category">{options}</select></label><label>처리 상태<select id="report-status"><option value="">모든 상태</option>{statuses}</select></label><label class="field-filter">변경된 필드<select id="report-field" aria-describedby="report-field-hint"><option value="">모든 변경 필드</option></select></label></div>

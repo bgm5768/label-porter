@@ -3,6 +3,7 @@ from __future__ import annotations
 import copy
 import json
 import re
+from decimal import Decimal
 from pathlib import PurePosixPath
 
 from .formats import (MISSING, DataError, canonical_key, equivalent, escape_token,
@@ -11,6 +12,27 @@ from .formats import (MISSING, DataError, canonical_key, equivalent, escape_toke
 
 class ReviewRequired(DataError):
     pass
+
+
+def truncate_decimal(value, digits):
+    """Drop decimal digits toward zero, without binary scaling or rounding up.
+
+    Use the parsed number's decimal spelling, not its exact binary expansion.
+    Tuple slicing also avoids Decimal context precision and huge powers of ten.
+    """
+    if type(digits) is not int or digits < 0:
+        raise ValueError("truncate.digits는 0 이상의 정수여야 합니다")
+    if not valid_number(value):
+        raise ValueError("유한한 숫자가 아닙니다")
+    if isinstance(value, int):
+        return value
+    sign, coefficient, exponent = Decimal(str(value)).as_tuple()
+    if exponent >= -digits:
+        return value
+    keep = len(coefficient) + exponent + digits
+    if keep <= 0:
+        return 0.0
+    return float(Decimal((sign, coefficient[:keep], -digits)))
 
 
 def expression(expr, context):
@@ -61,6 +83,8 @@ def expression(expr, context):
                 if not match:
                     raise ValueError("패턴과 일치하지 않습니다")
                 value = match.group(transform.get("group", 1))
+            elif op == "truncate":
+                value = truncate_decimal(value, transform["digits"])
             elif op in ("scale", "offset", "round"):
                 if not valid_number(value):
                     raise ValueError("숫자가 아닙니다")

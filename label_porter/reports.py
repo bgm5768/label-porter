@@ -14,6 +14,7 @@ from .detail_store import DetailStore
 from .result_dashboard import write_dashboard
 from .examine import category_for, label_path, ResultArchive
 from .json_display import json_prefix
+from .label_counts import LabelCounts
 
 
 STATUS = {
@@ -32,9 +33,10 @@ def csv_safe(value):
 
 
 class Reports:
-    def __init__(self, directory: Path, split_output=False, preview=False, result_spec=None, result_files=None, record_sink=None):
+    def __init__(self, directory: Path, split_output=False, preview=False, result_spec=None, result_files=None, record_sink=None, config=None):
         self.record_sink = record_sink
         self.preview = preview
+        self.labels = LabelCounts(config)
         self.directory = directory
         self.split_output = bool(split_output)
         directory.mkdir(parents=True, exist_ok=True)
@@ -110,6 +112,13 @@ class Reports:
         self.scope_counts[scope][status] += 1
         category = category_for(scope, status, result_row, bool(evidence and evidence.get("issues")))
         attention = bool(category)
+        if scope == "source" and evidence and "source_record" in evidence:
+            self.labels.add("output_before", evidence["source_record"])
+            final = evidence.get("final_record", evidence["source_record"])
+            if self.preview and status in ("planned_update", "unchanged", "excluded"):
+                final = evidence.get("candidate_record", final)
+            self.labels.add("output", final)
+            self.labels.add("examine" if attention else "completed", final)
         group = ("changed" if status in ("updated", "planned_update") else "unchanged") if self.split_output and scope == "source" else ""
         if attention and scope == "source":
             group = "examine"
@@ -242,6 +251,15 @@ class Reports:
                        output_records=category_counts["output"], unmatched_records=category_counts["unmatched"],
                        unmatched_source_records=self.scope_counts["source"]["no_result"],
                        unmatched_result_records=self.scope_counts["result"]["orphan_result"])
+        summary["label_counts"] = self.labels.rows()
+        with (self.directory / "label_counts.csv").open("w", encoding="utf-8-sig", newline="") as handle:
+            writer = csv.writer(handle)
+            writer.writerow(["라벨 경로", "보완 경로", "집계 범위", "레코드 수", "배열 수", "라벨 수", "경로 누락", "배열 아님", "집계 불가", "처리 전후 증감"])
+            for row in summary["label_counts"]:
+                for side, counts in row["counts"].items():
+                    writer.writerow([csv_safe(row["path"]), csv_safe(row["result_path"]), side,
+                        *[counts[key] for key in ("records", "arrays", "items", "missing", "non_array", "unavailable")],
+                        row["delta"] if side == "output" and row["delta"] is not None else ""])
         atomic_text(self.directory / "summary.json", json.dumps(summary, ensure_ascii=False, indent=2))
         write_dashboard(self.directory, summary, self.catalog, self.examples)
         return summary

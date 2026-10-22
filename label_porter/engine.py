@@ -108,7 +108,7 @@ def _execute_run(run_dir, source, result_paths, inventory, selected, config,
                  preview, progress, cancel, split_output, originals, directory_mode, record_sink=None):
     data_dir = run_dir / "data"
     report = Reports(run_dir / "reports", split_output=split_output, preview=preview,
-                     result_spec=config["result"], result_files=result_paths, record_sink=record_sink)
+                     result_spec=config["result"], result_files=result_paths, record_sink=record_sink, config=config)
     summary = {"prepared": record_sink is not None, "version": 5, "rule": config["name"], "preview": bool(preview), "status": "running",
                "started_at": _now(), "source_directory": str(source), "run_directory": str(run_dir),
                "split_output": bool(split_output), "partition_status": "pending" if split_output else "disabled",
@@ -173,6 +173,7 @@ def _execute_run(run_dir, source, result_paths, inventory, selected, config,
             for row_number, (_, _, row) in enumerate(rows, 1):
                 checkpoint()
                 summary["result_records"] += 1
+                report.labels.add("result", row)
                 try:
                     if not isinstance(row, dict):
                         raise DataError("작업 결과 레코드가 객체가 아닙니다.")
@@ -236,6 +237,7 @@ def _execute_run(run_dir, source, result_paths, inventory, selected, config,
                     manifest_by_file[relative] = entry
                 for doc_index, pointer, row in found:
                     summary["source_records"] += 1
+                    report.labels.add("source", row)
                     try:
                         if not isinstance(row, dict):
                             raise DataError("원본 레코드가 객체가 아닙니다.")

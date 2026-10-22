@@ -46,14 +46,14 @@ def _expr(expr):
     options = {
         "strip": (), "string": (), "integer": (), "number": (), "basename": (), "parse_json": (), "length": (),
         "regex": ("pattern", "group"), "scale": ("value",), "offset": ("value",),
-        "round": ("digits",), "pluck": ("path",), "join": ("separator",), "map_values": ("mapping",),
+        "round": ("digits",), "truncate": ("digits",), "pluck": ("path",), "join": ("separator",), "map_values": ("mapping",),
     }
     for transform in _list(expr.get("transforms", []), "transforms"):
         if not isinstance(transform, dict) or transform.get("op") not in options:
             raise DataError(f"지원하지 않는 변환입니다: {transform}")
         op = transform["op"]
         required = {"regex": ("pattern",), "scale": ("value",), "offset": ("value",),
-                    "pluck": ("path",), "map_values": ("mapping",)}.get(op, ())
+                    "pluck": ("path",), "map_values": ("mapping",), "truncate": ("digits",)}.get(op, ())
         _keys(transform, {"op", *options[op]}, {"op", *required}, "변환")
         if op == "regex":
             re.compile(transform["pattern"])
@@ -61,6 +61,8 @@ def _expr(expr):
             raise DataError("변환 계수는 유한한 숫자여야 합니다.")
         if op == "round" and (not isinstance(transform.get("digits", 6), int) or isinstance(transform.get("digits"), bool)):
             raise DataError("round.digits는 정수여야 합니다.")
+        if op == "truncate" and (type(transform["digits"]) is not int or transform["digits"] < 0):
+            raise DataError("truncate.digits는 0 이상의 정수여야 합니다.")
         if op == "pluck":
             tokens(transform["path"])
         if op == "join" and not isinstance(transform.get("separator", " "), str):

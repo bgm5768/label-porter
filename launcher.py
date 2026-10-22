@@ -17,7 +17,16 @@ def self_test(output):
         import tkinter as tk
         from unittest.mock import patch
         from label_porter.engine import run
+        from label_porter.rules import expression
+        from label_porter.label_counts import LabelCounts
         from label_porter.widgets import create_root
+        for digits, expected in ((3, 3.329), (1, 3.3), (0, 3.0)):
+            assert expression({'literal': 3.329999,
+                               'transforms': [{'op': 'truncate', 'digits': digits}]}, {}) == expected
+        label_counts = LabelCounts({'rules': [{'kind': 'field', 'from': '/labels', 'to': '/labels', 'type': 'array'}]})
+        label_counts.add('output_before', {'labels': [1]})
+        label_counts.add('output', {'labels': [1, 2, 3]})
+        assert label_counts.rows()[0]['delta'] == 2
         root = create_root()
         root.withdraw()
         with patch.object(App, "_load_settings"):
