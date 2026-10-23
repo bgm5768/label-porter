@@ -29,8 +29,10 @@ def self_test(output):
         assert label_counts.rows()[0]['delta'] == 2
         root = create_root()
         root.withdraw()
-        with patch.object(App, "_load_settings"):
+        history_temp = tempfile.TemporaryDirectory(prefix='porter_history_selftest_')
+        with patch.object(App, "_load_settings"), patch('label_porter.job_history.storage_directory', return_value=Path(history_temp.name)):
             app = App(root)
+        app.history_scanned = True
         app._save_settings = lambda: None  # Self-tests must never alter the user's working project.
         root.update_idletasks()
         app._show_updates(); root.update_idletasks()
@@ -138,6 +140,11 @@ def self_test(output):
             assert app._saved(), app.status.get()
             assert (app.last_run / 'reports/report.xlsx').is_file()
             assert str(app.excel_button['state']) == 'normal'
+            assert app.history.list(kind='preview')[1] >= 1
+            assert app.history.list(kind='run')[1] == 1
+            app._show_history(); root.update()
+            assert app.history_panel.list.table.get_children()
+            app._return_from_help()
             app._show_report_merge()
             excel_input = app.last_run / 'reports/report.xlsx'
             merged_excel = base / 'merged.xlsx'
@@ -148,6 +155,7 @@ def self_test(output):
             assert merged_excel.is_file(), app.report_merger.message.get()
             from label_porter.report_data import validate_data
             assert len(validate_data(merged_excel.with_suffix('.data.jsonl'))) == 1
+            assert app.history.list(kind='merge')[1] == 1
             app._return_from_help()
             assert json.loads((app.last_run / 'data/one.json').read_text(encoding='utf-8')) == editor.preview.pair['output']
             from label_porter.mapping import load_samples, preview_rule, import_rule, compile_rule
@@ -259,6 +267,7 @@ def self_test(output):
             assert app.mapping.preview.pair["output"]["label"] == "easy"
             app._close_mapping(); app._close_builder()
         root.destroy()
+        history_temp.cleanup()
         Path(output).write_text(json.dumps({"ok": True, "preview_only_stage3": True, "full_validation_stage4": True, "mermaid_diagrams": 3, "mermaid_offline": True, "tk": True, "rules": 4, "engine": True, "original_preserved": True, "split_output": True, "date_sequence": True, "reusable_preview": True, "media_feature_removed": True, "ai_guide_bundled": True, "general_project_help": True, "inline_help": True, "shared_navigation": True, "four_step_workflow": True, "automatic_data_preview": True, "ai_rule_roundtrip": True, "multiple_sample_files": True, "per_file_identity": True, "ai_first_workflow": True, "readonly_field_review": True, "inline_rule_inspection": True, "explicit_next_step": True, "easy_rules": True}), encoding="utf-8")
         return 0
     except Exception:

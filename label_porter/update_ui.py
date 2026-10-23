@@ -104,6 +104,8 @@ class UpdatePanel(ttk.Frame):
         if self.busy or not self.stage: return
         if self.app.running or (self.app.builder and self.app.builder.busy):
             self.message.set('데이터 처리가 끝난 뒤 업데이트를 설치해 주세요.'); return
+        if any(getattr(getattr(self.app, name, None), 'busy', False) for name in ('report_merger', 'history_panel')):
+            self.message.set('결과서 병합이나 보관함 내보내기가 끝난 뒤 업데이트를 설치해 주세요.'); return
         if self.app.builder:
             self.message.set('작성 중인 규칙을 완료하고 작업 화면으로 돌아온 뒤 설치해 주세요.'); return
         if not getattr(sys, 'frozen', False) or os.name != 'nt':

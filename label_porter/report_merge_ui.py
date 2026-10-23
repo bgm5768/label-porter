@@ -10,36 +10,68 @@ from .ui_lifecycle import UiEventQueue, release_variables
 
 
 class ReportMergePanel(ttk.Frame):
-    def __init__(self, parent):
+    def __init__(self, parent, history=None):
         super().__init__(parent, padding=18)
+        self.history = history
         self.paths, self.busy, self.closed, self.saved = [], False, False, None
         self.events, self.cancel, self.job = UiEventQueue(), threading.Event(), None
-        self.message = tk.StringVar(value="결과서를 선택하고 저장할 Excel 이름을 지정하세요. 한 개만 선택하면 새 양식으로 다시 작성합니다.")
+        self.message = tk.StringVar(value="이전 작업을 선택하면 병합 결과를 보관함에 저장합니다. 한 개만 선택하면 새 양식으로 다시 작성합니다." if history else "결과서를 선택하고 저장할 Excel 이름을 지정하세요.")
         self.fields = {}
         ttk.Label(self, text="여러 처리 결과를 하나의 보완 결과서로", style="CardTitle.TLabel").pack(anchor="w", pady=(0, 10))
+        self.history_list = None
+        if history is not None:
+            from .history_ui import JobList
+            ttk.Label(self, text='이전 작업 목록에서 병합할 작업을 선택하세요. Ctrl / Shift로 여러 작업을 선택할 수 있습니다.').pack(anchor='w')
+            self.history_list = JobList(self, history, reports_only=True)
+            self.history_list.table.configure(height=6)
+            self.history_list.pack(fill='both', expand=True, pady=8)
+            self.add_history = ttk.Button(self, text='선택한 작업을 병합 목록에 추가', command=self._add_history)
+            self.add_history.pack(anchor='w', pady=(0,8))
         ttk.Label(self, text="라벨 포터 Excel(.xlsx) · 이전 결과는 reports/summary.json 선택\n작업별 집계·전후 값·검토 사유를 보존합니다. 원본 JSON 수정과 여러 룰 실행은 별도 작업입니다.", wraplength=880).pack(anchor="w")
         bar = ttk.Frame(self); bar.pack(fill="x", pady=12)
-        self.add = ttk.Button(bar, text="결과서 추가…", command=self._choose); self.add.pack(side="left")
+        self.add = ttk.Button(bar, text="외부 결과서 추가…", command=self._choose); self.add.pack(side="left")
         self.remove = ttk.Button(bar, text="선택 제거", command=self._remove); self.remove.pack(side="left", padx=8)
         box = ttk.Frame(self); box.pack(fill="both", expand=True)
-        self.list = tk.Listbox(box, selectmode="extended", height=7, exportselection=False)
+        self.list = tk.Listbox(box, selectmode="extended", height=3 if history else 7, exportselection=False)
         scroll = ttk.Scrollbar(box, orient="vertical", command=self.list.yview)
         self.list.configure(yscrollcommand=scroll.set)
         scroll.pack(side="right", fill="y"); self.list.pack(fill="both", expand=True)
-        ttk.Label(self, text="보고서 표시 정보 (선택 입력)", style="CardTitle.TLabel").pack(anchor="w", pady=(16, 8))
+        self.metadata_toggle = ttk.Button(self, text='보고서 표시 정보 펼치기 ▾', command=self._toggle_metadata)
+        self.metadata_toggle.pack(anchor='w', pady=(12, 8))
+        self.metadata_form = ttk.Frame(self)
         for key, title, default in (("title", "보고서 제목", "통합 보완 결과서"), ("project_id", "과제 데이터번호", ""), ("dataset", "데이터명", ""), ("stage", "보완 단계", ""), ("quality", "품질특성", "")):
-            row = ttk.Frame(self); row.pack(fill="x", pady=3)
+            row = ttk.Frame(self.metadata_form); row.pack(fill="x", pady=3)
             ttk.Label(row, text=title, width=140).pack(side="left")
             var = self.fields[key] = tk.StringVar(value=default)
             ttk.Entry(row, textvariable=var).pack(fill="x", expand=True)
-        ttk.Label(self, text="같은 실행은 한 번만 포함합니다. 서로 다른 실행의 같은 KEY는 모두 유지하며 값 차이를 표시합니다.\nExcel 표를 수동 편집한 값은 병합에 반영되지 않습니다. 파일에 내장된 원 실행 데이터를 사용합니다.", wraplength=880).pack(anchor="w", pady=12)
+        self.explanation = ttk.Label(self, text="같은 실행은 한 번만 포함합니다. 서로 다른 실행의 같은 KEY는 모두 유지하며 값 차이를 표시합니다.\nExcel 표를 수동 편집한 값은 병합에 반영되지 않습니다. 파일에 내장된 원 실행 데이터를 사용합니다.", wraplength=880)
+        self.explanation.pack(anchor="w", pady=12)
         ttk.Label(self, textvariable=self.message, wraplength=880).pack(fill="x", pady=8)
         self.progress = ttk.Progressbar(self, mode="indeterminate"); self.progress.pack(fill="x", pady=6)
         actions = ttk.Frame(self); actions.pack(fill="x")
-        self.save = ttk.Button(actions, text="통합 Excel 저장…", command=self._save, style="Primary.TButton"); self.save.pack(side="left")
+        self.save = ttk.Button(actions, text="병합하여 보관함에 저장" if history else "통합 Excel 저장…", command=self._save, style="Primary.TButton"); self.save.pack(side="left")
         self.stop = ttk.Button(actions, text="중단", command=self.cancel.set, state="disabled"); self.stop.pack(side="left", padx=8)
         self.open = ttk.Button(actions, text="저장한 결과서 열기", command=self._open, state="disabled"); self.open.pack(side="left")
         self.bind("<Destroy>", self._destroyed, add="+")
+
+    def _toggle_metadata(self):
+        if self.metadata_form.winfo_manager():
+            self.metadata_form.pack_forget(); self.metadata_toggle.configure(text='보고서 표시 정보 펼치기 ▾')
+        else:
+            self.metadata_form.pack(fill='x', before=self.explanation); self.metadata_toggle.configure(text='보고서 표시 정보 접기 ▴')
+
+    def refresh_history(self):
+        if self.history_list: self.history_list.refresh()
+
+    def _add_history(self):
+        if self.busy: return
+        rows = self.history_list.selected()
+        for row in rows:
+            path = row.get('report')
+            if path and path not in self.paths:
+                self.paths.append(path)
+                self.list.insert('end', f"{row['title']} · {row['updated'][:19]} · {path}")
+        self.message.set(f'{len(self.paths)}개 결과 선택됨 · 병합 결과는 보관함에 자동 등록됩니다.')
 
     def _choose(self):
         if self.busy: return
@@ -54,7 +86,7 @@ class ReportMergePanel(ttk.Frame):
     def _save(self):
         if self.busy: return
         if not self.paths: self.message.set("결과서를 한 개 이상 추가하세요."); return
-        output = filedialog.asksaveasfilename(parent=self, title="통합 Excel 저장", initialfile="통합_보완결과서.xlsx", defaultextension=".xlsx", filetypes=[("Excel", "*.xlsx")])
+        output = self.history.merge_destination() if self.history else filedialog.asksaveasfilename(parent=self, title="통합 Excel 저장", initialfile="통합_보완결과서.xlsx", defaultextension=".xlsx", filetypes=[("Excel", "*.xlsx")])
         if not output: return
         self.start(tuple(self.paths), output, {k: v.get().strip() for k, v in self.fields.items()})
 
@@ -65,8 +97,14 @@ class ReportMergePanel(ttk.Frame):
         for button in (self.add, self.remove, self.save, self.open): button.configure(state="disabled")
         self.stop.configure(state="normal"); self.progress.start()
         events, cancel = self.events, self.cancel
+        history = self.history
         def work():
-            try: events.put(("done", merge_reports(paths, output, metadata, lambda value: events.put(("progress", value)), cancel)))
+            try:
+                result = merge_reports(paths, output, metadata, lambda value: events.put(("progress", value)), cancel)
+                if history:
+                    try: history.register_merge(output, result, paths, metadata.get('title'))
+                    except Exception as exc: result['history_error'] = str(exc)
+                events.put(("done", result))
             except Exception as exc: events.put(("error", str(exc)))
         # On window close, finish cancellation/temporary-file cleanup before process exit.
         threading.Thread(target=work, daemon=False, name="excel-report-merge").start()
@@ -84,6 +122,8 @@ class ReportMergePanel(ttk.Frame):
                 if kind == "done":
                     self.saved = Path(payload["path"]); self.open.configure(state="normal")
                     self.message.set(f"{payload['runs']}개 작업 저장 완료 · 동일 작업 {payload['duplicates_skipped']}개 제외\n{self.saved}")
+                    if payload.get('history_error'): self.message.set(self.message.get()+'\n보관함 등록 실패: '+payload['history_error'])
+                    self.refresh_history()
                 else: self.message.set("저장하지 못했습니다. " + payload)
         except queue.Empty: pass
         if self.busy: self.job = self.after(100, self._poll)

@@ -66,7 +66,7 @@ class WorkflowUiTests(unittest.TestCase):
             self.assertTrue(app.preview_fingerprint)
             before = self.sf.read_bytes()
             self.assertFalse((app.last_run / "data").exists())
-            self.assertTrue((self.base / "output" / "미리보기").exists())
+            self.assertTrue(app.last_run.is_relative_to(self.base / "output" / "검증"))
             app._start(False)
             self.until(lambda: not app.running)
             self.assertEqual(self.sf.read_bytes(), before)
@@ -565,11 +565,12 @@ class WorkflowUiTests(unittest.TestCase):
                 app._load_rule()
             self.assertEqual(app.output.get(), str(chosen))
 
-    def test_frozen_output_default_is_next_to_executable_not_temporary_resources(self):
+    def test_frozen_output_default_survives_executable_and_resource_changes(self):
         with patch("label_porter.workflow.sys.frozen", True, create=True), \
              patch("label_porter.workflow.sys.executable", str(self.base/"program"/"LabelPorter.exe")), \
              patch("label_porter.workflow.sys._MEIPASS", str(self.base/"temporary"), create=True):
-            self.assertEqual(default_output_directory(), self.base/"program"/"results")
+            from label_porter.job_history import storage_directory
+            self.assertEqual(default_output_directory(), storage_directory()/"results")
 
     def test_default_destination_follows_program_after_restart_but_custom_path_does_not(self):
         with patch.object(App, "_load_settings"):

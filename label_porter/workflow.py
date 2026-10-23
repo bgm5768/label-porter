@@ -4,6 +4,7 @@ import json
 import os
 import sys
 import threading
+import uuid
 import tkinter as tk
 import webbrowser
 from pathlib import Path
@@ -19,9 +20,8 @@ def resource_directory():
 
 
 def default_output_directory():
-    # A frozen app's resources live in a temporary _MEIPASS folder, not beside its EXE.
-    program = Path(sys.executable).resolve().parent if getattr(sys, "frozen", False) else Path(__file__).resolve().parents[1]
-    return program / "results"
+    from .job_history import storage_directory
+    return storage_directory() / 'results'
 
 
 class Workflow:
@@ -34,6 +34,7 @@ class Workflow:
         if panel is None: return
         if self.running and not self.preparing: return
         if self.preview_generation != panel.generation:
+            self.restored_result = False
             self.preview_generation = panel.generation
             self.preview_fingerprint = self.last_summary = self.last_run = None
             self.connection_confirmed = False
@@ -64,6 +65,7 @@ class Workflow:
             self.status.set(f'입력 확인: {exc}')
             return
         expected = self.preview_fingerprint
+        self.restored_result = False
         owned = tuple(self.owned_outputs)
         self.preview_fingerprint = None
         self.running = self.checking_inputs = True
@@ -76,6 +78,7 @@ class Workflow:
         self._save_settings()
         self._sync_actions()
         events = self.queue
+        history, settings = self.history, self._settings_snapshot()
         def work():
             from .engine import run, Cancelled
             try:
@@ -85,19 +88,26 @@ class Workflow:
                 if not preview and stamp != expected:
                     raise ValueError('입력이 변경되었습니다. 전체 데이터 검증을 다시 실행하세요.')
                 events.put(('run_fingerprint', stamp))
-                result = run(request.source, results, request.output, request.config, preview=preview,
+                # Every validation has its own location so previous history never points
+                # at a subsequently overwritten reusable preview. No extra data copy.
+                destination = Path(request.output)/'검증'/uuid.uuid4().hex if preview else request.output
+                result = run(request.source, results, destination, request.config, preview=preview,
                              progress=lambda event: events.put(('progress', event)), cancel=cancel,
                              split_output=request.split)
                 events.put(('owned_output', result.directory))
+                history_error = None
+                try: history.register_run(result.directory, result.summary, settings)
+                except Exception as exc: history_error = str(exc)
                 if preview and result.summary['status'].startswith('completed'):
                     _, current = inspect_inputs(request, checkpoint, stamp=True,
                                                 exclude_result_directories=(*owned, result.directory))
                     if current != stamp:
                         raise ValueError('검증 도중 입력이 변경되었습니다. 전체 데이터 검증을 다시 실행하세요.')
                 events.put(('complete', result))
+                if history_error: events.put(('history_warning', history_error))
             except Exception as exc:
                 events.put(('error', str(exc)))
-        threading.Thread(target=work, daemon=True, name='validate-or-save').start()
+        threading.Thread(target=work, daemon=False, name='validate-or-save').start()
 
     def _document_view(self, frame, text):
         from .markdown_viewer import MarkdownViewer
@@ -212,7 +222,7 @@ class Workflow:
     def _reset_output(self):
         self.output.set(str(default_output_directory()))
         self.output_mode = "default"
-        self.status.set("저장 위치를 프로그램 폴더의 results로 변경했습니다.")
+        self.status.set("저장 위치를 프로그램 전용 보관함으로 변경했습니다.")
 
     def _output_changed(self, *_):
         value = self.output.get().strip()

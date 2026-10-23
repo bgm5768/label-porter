@@ -6,6 +6,8 @@ import os
 import queue
 import sys
 import threading
+import uuid
+import sqlite3
 import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, font, scrolledtext
@@ -44,6 +46,7 @@ class App(Workflow):
         self.builder = None
         self.preloaded_preview = None
         self.last_run = self.last_summary = None
+        self.restored_result = False
         self.source_files = []
         self.result_folder = ""
         self.result_paths = []
@@ -62,6 +65,13 @@ class App(Workflow):
         self.result_count = tk.StringVar(value="선택한 결과 파일 없음")
         self.bundled_rules = {c["name"]: (p, c) for p in sorted((resource_directory()/"rules").glob("*.json")) for c in [load_config(p)]}
         self.settings_path = Path(os.environ.get("APPDATA", str(Path.home()))) / "LabelPorter" / "settings.json"
+        from .job_history import JobHistory
+        self.history = JobHistory()
+        self.draft_id = 'draft-' + uuid.uuid4().hex
+        self.autosave_job = None
+        self.history_scanned = False
+        self.history_roots = [default_output_directory(), resource_directory()/'results', resource_directory()/'outputs']
+        if getattr(sys, 'frozen', False): self.history_roots.append(Path(sys.executable).parent/'results')
         self.ai_guide_text = (resource_directory()/AI_GUIDE_FILENAME).read_text(encoding="utf-8")
         self.help_text = (resource_directory()/"사용설명.md").read_text(encoding="utf-8")
         self.capabilities_text = (resource_directory()/"후처리_지원범위.md").read_text(encoding="utf-8")
@@ -101,6 +111,9 @@ class App(Workflow):
         self.merge_button = ttk.Button(sidebar, text="결과서 병합", anchor="w", command=self._show_report_merge)
         self.merge_button.configure(border_width=0)
         self.merge_button.pack(side="bottom", fill="x", padx=10, pady=(0, 10))
+        self.history_button = ttk.Button(sidebar, text="작업 보관함", anchor="w", command=self._show_history)
+        self.history_button.configure(border_width=0)
+        self.history_button.pack(side="bottom", fill="x", padx=10, pady=(0, 10))
         self.viewer_button = ttk.Button(sidebar, text="JSON 뷰어", anchor="w",
                                        font=("맑은 고딕", 11), command=self._json_viewer)
         self.viewer_button.configure(border_width=0)
@@ -189,7 +202,7 @@ class App(Workflow):
         self.result_panel = DataInputPanel(group, self.result_count, self._choose_result_folder, self._choose_results,
                                            self._remove_results, lambda: self._json_viewer('result'))
         self.result_list = self.result_panel.list
-        group = card(inputs, "3. 새 결과를 저장할 폴더", "기본값은 프로그램 폴더의 results입니다. 직접 선택한 경로에는 이름을 덧붙이지 않습니다. 그 아래 날짜 / 순번으로 실행별 결과를 보관합니다.")
+        group = card(inputs, "3. 결과물 보관 위치", "프로그램 전용 보관함에서 실행별 결과를 자동 관리합니다. 필요하면 보관 위치를 변경할 수 있습니다. 작업 보관함에서 폴더 열기와 다른 이름으로 저장을 이용하세요.")
         self._path_row(group, self.output, self._choose_output)
         self.default_output_button = ttk.Button(group, text="기본 위치", command=self._reset_output)
         self.default_output_button.pack(anchor="e", pady=(6, 0))
@@ -245,8 +258,14 @@ class App(Workflow):
         self.merge_host = ttk.Card(self.content, padding=12)
         self.merge_page = ScrollPage(self.merge_host)
         self.merge_page.pack(fill="both", expand=True)
-        self.report_merger = ReportMergePanel(self.merge_page.body)
+        self.report_merger = ReportMergePanel(self.merge_page.body, history=self.history)
         self.report_merger.pack(fill="both", expand=True)
+        from .history_ui import HistoryPanel
+        self.history_host = ttk.Card(self.content, padding=12)
+        self.history_page = ScrollPage(self.history_host)
+        self.history_page.pack(fill='both', expand=True)
+        self.history_panel = HistoryPanel(self.history_page.body, self)
+        self.history_panel.pack(fill='both', expand=True)
 
     @staticmethod
     def _table(parent, columns, height):
@@ -291,7 +310,7 @@ class App(Workflow):
         self.mapping = None
 
     def _show_step(self, index):
-        if index == 3 and not self._session_ready() and not self._saved():
+        if index == 3 and not self._session_ready() and not self._saved() and not self.restored_result:
             self.status.set("3단계 프리뷰 계산이 끝난 뒤 전체 검증 단계로 이동할 수 있습니다.")
             self._wizard()
             return
@@ -302,6 +321,7 @@ class App(Workflow):
         self.help_host.pack_forget(); self.help_return = None
         self.update_host.pack_forget()
         self.merge_host.pack_forget()
+        self.history_host.pack_forget()
         self.mapping_host.pack_forget()
         self.builder_host.pack_forget()
         self.steps.pack(fill="both", expand=True); self.steps.tab(index, state="normal"); self.steps.select(index)
@@ -314,6 +334,9 @@ class App(Workflow):
 
     def _sync_actions(self):
         merging = bool(self.merge_host.winfo_manager())
+        history = bool(self.history_host.winfo_manager())
+        self.history_button.configure(state='disabled' if self.running or (self.builder and self.builder.busy) else 'normal',
+                                      bg=ttk.SELECTED if history else ttk.SURFACE, fg=ttk.SELECTED_INK if history else INK)
         self.merge_button.configure(state="disabled" if self.running or (self.builder and self.builder.busy) else "normal",
                                     bg=ttk.SELECTED if merging else ttk.SURFACE, fg=ttk.SELECTED_INK if merging else INK)
         self.update_button.configure(state="disabled" if self.running or (self.builder and self.builder.busy) else "normal")
@@ -346,10 +369,10 @@ class App(Workflow):
         for button in (self.cancel_button, self.report_button, self.excel_button, self.folder_button): button.pack_forget()
         for i, button in enumerate(self.nav_buttons):
             active = i == self.current_step and not helping
-            button.configure(state="disabled" if self.running or (i > 0 and not self.rule_ready) or (i == 3 and not self._session_ready()) else "normal",
+            button.configure(state="disabled" if self.running or (i > 0 and not self.rule_ready) or (i == 3 and not self._session_ready() and not self.restored_result) else "normal",
                              bg=ttk.SELECTED if active else ttk.SURFACE, fg=ttk.SELECTED_INK if active else INK)
-        self.help_button.configure(state="disabled" if self.running else "normal", bg=ttk.SELECTED if helping and not merging else ttk.SURFACE, fg=ttk.SELECTED_INK if helping and not merging else INK)
-        self.step_indicator.set("도움말" if helping else f"{self.current_step + 1} / 4 단계")
+        self.help_button.configure(state="disabled" if self.running else "normal", bg=ttk.SELECTED if helping and not merging and not history else ttk.SURFACE, fg=ttk.SELECTED_INK if helping and not merging and not history else INK)
+        self.step_indicator.set(('작업 보관함' if history else '결과서 병합' if merging else '도움말') if helping else f"{self.current_step + 1} / 4 단계")
         if helping:
             self.primary_button.grid_remove()
             self._layout_footer()
@@ -363,7 +386,8 @@ class App(Workflow):
         if self.current_step == 2:
             title = "프리뷰 계산 중…" if self.preparing else "전체 검증 단계로 →" if self._session_ready() else "프리뷰 다시 불러오기"
         if self.current_step == 3 and not self._session_ready() and not self._saved(): title = "3단계 프리뷰 확인 필요"
-        self.primary_button.configure(text=title, state="normal" if not self.running and self.rule_ready and (self.current_step != 3 or self._session_ready() or self._saved()) else "disabled")
+        if self.current_step == 3 and self.restored_result and not self._saved(): title = '입력 다시 확인 →'
+        self.primary_button.configure(text=title, state="normal" if not self.running and self.rule_ready and (self.current_step != 3 or self._session_ready() or self._saved() or self.restored_result) else "disabled")
         self._layout_footer()
 
     def _layout_footer(self, _=None):
@@ -386,6 +410,7 @@ class App(Workflow):
         if index == 0: self._show_step(0)
         elif index == 1: self._advance_inputs()
         elif index == 2: self._wizard()
+        elif index == 3 and self.restored_result: self._show_step(3)
         elif self.route == "mapping" and self.mapping:
             self.mapping.apply_button.invoke()
         else: self._advance_review()
@@ -398,6 +423,7 @@ class App(Workflow):
         elif self.current_step == 1: self._wizard()
         elif self.current_step == 2 and self.mapping: self.mapping._apply()
         elif self._saved(): self._open_folder()
+        elif self.restored_result: self._wizard()
         else: self._start(self.preview_fingerprint is None)
 
     def _back(self):
@@ -413,6 +439,7 @@ class App(Workflow):
         self.steps.pack_forget(); self.mapping_host.pack_forget(); self.builder_host.pack_forget()
         self.update_host.pack_forget()
         self.merge_host.pack_forget()
+        self.history_host.pack_forget()
         self.help_host.pack(fill="both", expand=True)
         self.route = "help"
         self.tabs.select(tab)
@@ -434,15 +461,75 @@ class App(Workflow):
         self._show_tools(1)
         self.help_host.pack_forget()
         self.merge_host.pack(fill="both", expand=True)
+        self.report_merger.refresh_history()
+        self._discover_history_once()
         self.page_title.set("결과서 병합")
         self.page_caption.set("보완 요약·상세 이력·예시를 하나의 Excel 결과서로 정리합니다.")
         self._sync_actions()
+
+    def _show_history(self):
+        if self.running or (self.builder and self.builder.busy): return
+        self._save_settings()
+        self._show_tools(1)
+        self.help_host.pack_forget()
+        self.history_host.pack(fill='both', expand=True)
+        self.page_title.set('작업 보관함')
+        self.page_caption.set('설정은 자동 저장됩니다. 이전 작업 불러오기 · 결과 확인 · 다른 이름으로 저장을 한곳에서 이용하세요.')
+        self.history_panel.refresh()
+        self._discover_history_once()
+        self._sync_actions()
+
+    def _discover_history_once(self):
+        if not self.history_scanned:
+            self.history_scanned = True
+            self.history_panel.discover([*self.history_roots, self.output.get()])
+
+    def _load_history_job(self, job):
+        if self.running: return
+        if job.get('kind') == 'merge':
+            if self.report_merger.busy:
+                self.history_panel.message.set('진행 중인 병합이 끝난 뒤 불러오세요.'); return
+            self._show_report_merge()
+            merger = self.report_merger
+            merger.paths = list(job.get('inputs', [])); merger.list.delete(0, 'end')
+            for path in merger.paths: merger.list.insert('end', path)
+            merger.fields['title'].set(job['title']); merger.saved = Path(job['report'])
+            merger.open.configure(state='normal')
+            merger.message.set('이전 병합 작업을 불러왔습니다. 저장한 결과서를 바로 열 수 있으며, 다시 병합하면 새 결과로 보관합니다.')
+            return
+        settings = job.get('settings')
+        if not settings or not settings.get('config'):
+            self.history_panel.message.set('이 작업에는 재실행할 규칙·입력 설정이 없습니다. 결과서 또는 폴더를 열어 확인하세요.'); return
+        try: validate_config(settings['config'])
+        except (ValueError, TypeError, KeyError) as exc:
+            self.history_panel.message.set(f'규칙을 복원하지 못했습니다: {exc}'); return
+        self._save_settings()
+        self._close_mapping(); self._close_builder()
+        self.draft_id = 'draft-' + uuid.uuid4().hex
+        self.source_files = settings.get('source_files', [])
+        self.source.set(settings.get('source', '')); self._render_sources()
+        self.result_folder = settings.get('result_folder', '')
+        self.result_paths = settings.get('results', []); self._render_results()
+        self.output.set(settings.get('output') or str(default_output_directory()))
+        self.split_output.set(settings.get('split_output', True))
+        self._set_config(settings['config']); self.rule_file.set(settings.get('rule_file','보관함의 규칙'))
+        self.preview_fingerprint = None
+        if job.get('directory') and job.get('summary'):
+            self.last_run = Path(job['directory']); self.last_summary = job['summary']; self.restored_result = True
+            self._show_summary(self.last_summary)
+            self.run_summary.set(f"{job['title']} · 저장된 처리 결과\n{self.last_run}")
+            self.report_button.configure(state='normal'); self.excel_button.configure(state='normal'); self.folder_button.configure(state='normal')
+            self._show_step(3)
+        else: self._show_step(0)
+        self._save_settings()
+        self.status.set(f'“{job["title"]}” 작업을 불러왔습니다. 저장된 결과는 그대로 확인할 수 있습니다. 다시 처리하려면 입력을 확인하고 재검증하세요.')
 
     def _return_from_help(self):
         if self.route != "help" or not self.help_return: return
         self.help_host.pack_forget()
         self.update_host.pack_forget()
         self.merge_host.pack_forget()
+        self.history_host.pack_forget()
         self.route, title, caption, status = self.help_return
         self.help_return = None
         (self.builder_host if self.route == "builder" else self.mapping_host if self.route == "mapping" else self.steps).pack(fill="both", expand=True)
@@ -533,6 +620,7 @@ class App(Workflow):
             page.canvas.yview_moveto(max(0, top - 8) / height)
 
     def _invalidate_preview(self, *, destination_only=False):
+        self.restored_result = False
         if not destination_only:
             if self.preparing and self.mapping: self.mapping.preview.cancel()
             if self.preloaded_preview and self.preloaded_preview[0] != self._mapping_inputs():
@@ -548,6 +636,7 @@ class App(Workflow):
         self.excel_button.configure(state='disabled')
         self.folder_button.configure(state='disabled')
         self._sync_actions()
+        self._schedule_autosave()
 
     def _invalidate_rule(self):
         self.rule_ready = bool(self._config_text); self._invalidate_preview()
@@ -682,6 +771,10 @@ class App(Workflow):
                 if kind == 'owned_output':
                     if payload not in self.owned_outputs: self.owned_outputs.append(payload)
                     continue
+                if kind == 'history_warning':
+                    self._append_log('작업 보관함 기록 실패: ' + payload)
+                    self.status.set('결과 파일은 저장했지만 작업 보관함 기록에 실패했습니다. 결과 폴더를 등록해 주세요.')
+                    continue
                 if kind == "run_fingerprint":
                     self.checking_inputs = False
                     self.active_fingerprint = payload
@@ -732,6 +825,8 @@ class App(Workflow):
     def _load_settings(self):
         try:
             s = json.loads(self.settings_path.read_text(encoding="utf-8"))
+            self.draft_id = s.get('draft_id') or self.draft_id
+            if s.get('output'): self.history_roots.append(s['output'])
             self.source_files = s.get("source_files", [])
             self.result_folder = s.get("result_folder", "")
             self.source.set(s.get("source", "")); self._render_sources()
@@ -753,17 +848,33 @@ class App(Workflow):
 
     def _save_settings(self):
         try:
-            s = {"source": self.source.get(), "source_files": self.source_files, "result_folder": self.result_folder, "output": self.output.get(), "output_mode": self.output_mode, "results": self.result_paths, "split_output": self.split_output.get(),
-                 "rule_file": self.rule_file.get(), "config": self._get_config() if self._config_text else None}
+            s = self._settings_snapshot()
             self.settings_path.parent.mkdir(parents=True, exist_ok=True)
             temp = self.settings_path.with_suffix(".tmp"); temp.write_text(json.dumps(s, ensure_ascii=False), encoding="utf-8"); os.replace(temp, self.settings_path)
+            if s.get('config'): self.history.draft(self.draft_id, s)
             return True
-        except (OSError, ValueError, TypeError): return False
+        except (OSError, ValueError, TypeError, sqlite3.Error) as exc:
+            self.status.set(f'설정 자동 저장 실패: {exc}'); return False
+
+    def _settings_snapshot(self):
+        return {"draft_id": self.draft_id, "source": self.source.get(), "source_files": list(self.source_files), "result_folder": self.result_folder,
+                "output": self.output.get(), "output_mode": self.output_mode, "results": list(self.result_paths), "split_output": self.split_output.get(),
+                "rule_file": self.rule_file.get(), "config": self._get_config() if self._config_text else None}
+
+    def _schedule_autosave(self):
+        if self.autosave_job:
+            self.root.after_cancel(self.autosave_job)
+        def save():
+            self.autosave_job = None
+            self._save_settings()
+        self.autosave_job = self.root.after(600, save)
 
     def _destroyed(self, event):
         if event.widget is not self.root: return
         self.cancel_event.set()
         self.queue.close()
+        if self.autosave_job:
+            self.root.after_cancel(self.autosave_job); self.autosave_job = None
         remove_traces(self.traces)
         self.root.after_cancel(self.poll_job)
         self.poll_job = None
