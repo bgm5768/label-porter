@@ -60,27 +60,27 @@ class ExcelReportTests(unittest.TestCase):
         directory = outcome.directory / "reports"
         self.assertIn('href="report.xlsx"', (directory / "report.html").read_text(encoding="utf-8"))
         tabs = sheets(directory / "report.xlsx")
-        self.assertEqual(list(tabs), ["요약", "라벨 수", "전체 목록", "변경 필드", "검토 사유", "레코드 JSON"])
-        overview = {address: value for row in tabs["요약"][1] for address, value in row.items()}
-        self.assertEqual(overview["A14"], "원본 레코드")
-        self.assertEqual(overview["B14"], "3")
-        self.assertEqual(overview["A15"], "보완 레코드")
-        self.assertEqual(overview["B15"], "3")
-        self.assertEqual(tabs["라벨 수"][1][1]["F2"], "4")
-        self.assertEqual(tabs["라벨 수"][1][1]["I2"], "1")
+        self.assertEqual(list(tabs)[:3], ["항목 및 보완 요약표", "보완 상세 이력", "보완 예시"])
+        overview = {address: value for row in tabs["항목 및 보완 요약표"][1] for address, value in row.items()}
+        self.assertEqual(overview["D6"], "원본 레코드")
+        self.assertEqual(overview["D7"], "3")
+        self.assertEqual(overview["E6"], "보완 레코드")
+        self.assertEqual(overview["E7"], "3")
+        self.assertEqual(tabs["라벨 수"][1][1]["G2"], "4")
+        self.assertEqual(tabs["라벨 수"][1][1]["J2"], "1")
         catalog = json.loads((directory / "catalog.json").read_text(encoding="utf-8"))
         self.assertEqual(len(tabs["전체 목록"][1]) - 1, sum(row["scope"] != "change" for row in catalog))
-        self.assertEqual(len(tabs["변경 필드"][1]) - 1, outcome.summary["changed_fields"])
+        self.assertEqual(len(tabs["보완 상세 이력"][1]) - 1, outcome.summary["changed_fields"])
         self.assertEqual(len(tabs["검토 사유"][1]) - 1, outcome.summary["review_findings"])
         detail_lines = (directory / "record_details.jsonl").read_text(encoding="utf-8").splitlines()
         self.assertEqual(len(tabs["레코드 JSON"][1]) - 1, len(detail_lines))
-        self.assertTrue(any(c.get("D" + str(row)) == "=1+1"
+        self.assertTrue(any(c.get("E" + str(row)) == "=1+1"
                             for row, c in enumerate(tabs["전체 목록"][1], 1)))
         self.assertTrue(any('"new"' in cell.get("K" + str(row), "")
                             for row, cell in enumerate(tabs["레코드 JSON"][1], 1)))
         for tree, _ in tabs.values():
             self.assertFalse(tree.findall(f".//{{{MAIN}}}f"), "User data was interpreted as an Excel formula")
-        for title in ("전체 목록", "변경 필드", "검토 사유", "레코드 JSON"):
+        for title in ("전체 목록", "보완 상세 이력", "검토 사유", "레코드 JSON"):
             tree = tabs[title][0]
             self.assertIsNotNone(tree.find(f"{{{MAIN}}}autoFilter"))
             self.assertIsNotNone(tree.find(f".//{{{MAIN}}}pane"))

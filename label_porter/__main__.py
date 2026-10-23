@@ -22,6 +22,14 @@ def main(argv=None):
     check = sub.add_parser("validate-config", help="설정 문법 검사")
     check.add_argument("config")
     sub.add_parser("gui", help="데스크톱 화면 실행")
+    merge = sub.add_parser("merge-reports", help="여러 처리 결과를 하나의 Excel로 병합")
+    merge.add_argument("inputs", nargs="+", help="라벨 포터 .xlsx / summary.json / report_data.jsonl")
+    merge.add_argument("--output", required=True, help="저장할 .xlsx 파일")
+    merge.add_argument("--title", default="통합 보완 결과서")
+    merge.add_argument("--project-id", default="")
+    merge.add_argument("--dataset", default="")
+    merge.add_argument("--stage", default="")
+    merge.add_argument("--quality", default="")
     args = parser.parse_args(argv)
     try:
         if args.command in (None, "gui"):
@@ -29,6 +37,13 @@ def main(argv=None):
             gui_main()
             return 0
         from .config import load_config
+        if args.command == "merge-reports":
+            from .report_data import merge_reports
+            result = merge_reports(args.inputs, args.output,
+                {key: getattr(args, key) for key in ("title", "project_id", "dataset", "stage", "quality")},
+                lambda message: print(message, file=sys.stderr, flush=True))
+            print(json.dumps(result, ensure_ascii=False))
+            return 0
         if args.command == "validate-config":
             print(json.dumps({"valid": True, "name": load_config(Path(args.config))["name"]}, ensure_ascii=False))
             return 0

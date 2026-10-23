@@ -70,7 +70,8 @@
       examine/file_errors/   파일 단위 오류
       reports/
         report.html       분류별 검색·페이지 이동이 있는 처리 결과서
-        report.xlsx       요약·라벨 수·전체 목록·변경/검토·전후 JSON을 보는 Excel 결과서
+        report.xlsx       보완 요약·상세 이력·예시·검토·전후 JSON을 보는 Excel 결과서
+        report_data.jsonl 작업 ID로 연결되는 버전 있는 결과서 원문·Excel 재병합용
         catalog.json      원본·보완·출력·완료·검토·누락·변경 필드 목록
         record_details.jsonl 모든 처리 항목의 원본·보완·출력 JSON
         detail.html       공통 레코드 상세 화면

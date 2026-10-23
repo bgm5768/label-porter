@@ -98,6 +98,9 @@ class App(Workflow):
         self.update_button = ttk.Button(sidebar, text="프로그램 업데이트", anchor="w", command=self._show_updates)
         self.update_button.configure(border_width=0)
         self.update_button.pack(side="bottom", fill="x", padx=10, pady=(0, 10))
+        self.merge_button = ttk.Button(sidebar, text="결과서 병합", anchor="w", command=self._show_report_merge)
+        self.merge_button.configure(border_width=0)
+        self.merge_button.pack(side="bottom", fill="x", padx=10, pady=(0, 10))
         self.viewer_button = ttk.Button(sidebar, text="JSON 뷰어", anchor="w",
                                        font=("맑은 고딕", 11), command=self._json_viewer)
         self.viewer_button.configure(border_width=0)
@@ -238,6 +241,12 @@ class App(Workflow):
         self.update_page.pack(fill="both", expand=True)
         self.updater = UpdatePanel(self.update_page.body, self)
         self.updater.pack(fill="both", expand=True)
+        from .report_merge_ui import ReportMergePanel
+        self.merge_host = ttk.Card(self.content, padding=12)
+        self.merge_page = ScrollPage(self.merge_host)
+        self.merge_page.pack(fill="both", expand=True)
+        self.report_merger = ReportMergePanel(self.merge_page.body)
+        self.report_merger.pack(fill="both", expand=True)
 
     @staticmethod
     def _table(parent, columns, height):
@@ -292,6 +301,7 @@ class App(Workflow):
         self.route, self.current_step = "workflow", index
         self.help_host.pack_forget(); self.help_return = None
         self.update_host.pack_forget()
+        self.merge_host.pack_forget()
         self.mapping_host.pack_forget()
         self.builder_host.pack_forget()
         self.steps.pack(fill="both", expand=True); self.steps.tab(index, state="normal"); self.steps.select(index)
@@ -303,6 +313,9 @@ class App(Workflow):
         self._sync_actions()
 
     def _sync_actions(self):
+        merging = bool(self.merge_host.winfo_manager())
+        self.merge_button.configure(state="disabled" if self.running or (self.builder and self.builder.busy) else "normal",
+                                    bg=ttk.SELECTED if merging else ttk.SURFACE, fg=ttk.SELECTED_INK if merging else INK)
         self.update_button.configure(state="disabled" if self.running or (self.builder and self.builder.busy) else "normal")
         # Disabling a selected native Notebook tab silently switches its page.
         # Keep an already-open failure/result page visible; navigation into it
@@ -335,7 +348,7 @@ class App(Workflow):
             active = i == self.current_step and not helping
             button.configure(state="disabled" if self.running or (i > 0 and not self.rule_ready) or (i == 3 and not self._session_ready()) else "normal",
                              bg=ttk.SELECTED if active else ttk.SURFACE, fg=ttk.SELECTED_INK if active else INK)
-        self.help_button.configure(state="disabled" if self.running else "normal", bg=ttk.SELECTED if helping else ttk.SURFACE, fg=ttk.SELECTED_INK if helping else INK)
+        self.help_button.configure(state="disabled" if self.running else "normal", bg=ttk.SELECTED if helping and not merging else ttk.SURFACE, fg=ttk.SELECTED_INK if helping and not merging else INK)
         self.step_indicator.set("도움말" if helping else f"{self.current_step + 1} / 4 단계")
         if helping:
             self.primary_button.grid_remove()
@@ -399,6 +412,7 @@ class App(Workflow):
             self.help_return = (self.route, self.page_title.get(), self.page_caption.get(), self.status.get())
         self.steps.pack_forget(); self.mapping_host.pack_forget(); self.builder_host.pack_forget()
         self.update_host.pack_forget()
+        self.merge_host.pack_forget()
         self.help_host.pack(fill="both", expand=True)
         self.route = "help"
         self.tabs.select(tab)
@@ -415,10 +429,20 @@ class App(Workflow):
         self.page_title.set("프로그램 업데이트")
         self.page_caption.set("GitHub 정식 릴리스를 확인하고 원하는 시점에 설치하세요.")
 
+    def _show_report_merge(self):
+        if self.running or (self.builder and self.builder.busy): return
+        self._show_tools(1)
+        self.help_host.pack_forget()
+        self.merge_host.pack(fill="both", expand=True)
+        self.page_title.set("결과서 병합")
+        self.page_caption.set("보완 요약·상세 이력·예시를 하나의 Excel 결과서로 정리합니다.")
+        self._sync_actions()
+
     def _return_from_help(self):
         if self.route != "help" or not self.help_return: return
         self.help_host.pack_forget()
         self.update_host.pack_forget()
+        self.merge_host.pack_forget()
         self.route, title, caption, status = self.help_return
         self.help_return = None
         (self.builder_host if self.route == "builder" else self.mapping_host if self.route == "mapping" else self.steps).pack(fill="both", expand=True)

@@ -138,6 +138,17 @@ def self_test(output):
             assert app._saved(), app.status.get()
             assert (app.last_run / 'reports/report.xlsx').is_file()
             assert str(app.excel_button['state']) == 'normal'
+            app._show_report_merge()
+            excel_input = app.last_run / 'reports/report.xlsx'
+            merged_excel = base / 'merged.xlsx'
+            app.report_merger.start([excel_input, excel_input], merged_excel, {'title': 'Self-test merge'})
+            deadline = time.monotonic() + 15
+            while app.report_merger.busy and time.monotonic() < deadline:
+                root.update(); time.sleep(.01)
+            assert merged_excel.is_file(), app.report_merger.message.get()
+            from label_porter.report_data import validate_data
+            assert len(validate_data(merged_excel.with_suffix('.data.jsonl'))) == 1
+            app._return_from_help()
             assert json.loads((app.last_run / 'data/one.json').read_text(encoding='utf-8')) == editor.preview.pair['output']
             from label_porter.mapping import load_samples, preview_rule, import_rule, compile_rule
             for _, rule_config in app.bundled_rules.values():

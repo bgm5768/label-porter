@@ -83,6 +83,24 @@ class WorkflowUiTests(unittest.TestCase):
         return {"schema_version": 1, "name": "프로젝트", "source": {"key": "/id"}, "result": {"key": "/ref"},
                 "rules": [{"kind": "field", "from": "/new", "to": "/label"}]}
 
+    def test_report_merge_returns_to_workflow_and_saves_in_background(self):
+        from label_porter.engine import run
+        with patch.object(App, '_load_settings'), patch.object(App, '_save_settings'):
+            app = App(self.root)
+            source = run(self.source, [self.rf], self.base/'input-report', self.config(), preview=True)
+            app._show_report_merge()
+            self.assertEqual(app.page_title.get(), '결과서 병합')
+            self.assertEqual(app.route, 'help')
+            output = self.base/'merged.xlsx'
+            app.report_merger.start([source.directory/'reports/report.xlsx'], output, {'project_id':'008'})
+            self.assertTrue(app.report_merger.busy)
+            self.until(lambda: not app.report_merger.busy)
+            self.assertTrue(output.is_file(), app.report_merger.message.get())
+            self.assertEqual(str(app.report_merger.open['state']), 'normal')
+            app._return_from_help()
+            self.assertEqual(app.route, 'workflow')
+            self.assertFalse(app.merge_host.winfo_manager())
+
     def test_symmetric_inputs_accept_multiple_files_or_folder_and_preview_both(self):
         with patch.object(App, '_load_settings'), patch.object(App, '_save_settings'):
             app = App(self.root); app._set_config(self.config())

@@ -127,6 +127,7 @@ def write_dashboard(directory, summary, catalog, examples):
     excel_download = (("report.xlsx", "Excel 결과서", "요약·라벨 수·전체 목록·변경 필드·검토 사유·전후 JSON"),) if has_excel else ()
     downloads = (
         *excel_download,
+        *((("report_data.jsonl", "구조화된 결과서 JSONL", "Excel 병합 원문 · 작업 ID·전후 값·출처 보존"),) if (directory / "report_data.jsonl").is_file() else ()),
         ("records.csv", "처리 상태 CSV", "원본 처리 상태와 연결 오류 · 엑셀용"),
         ("catalog.json", "전체 목록 JSON", "원본·보완·변경 필드 등 모든 분류의 검색 목록"),
         ("record_details.jsonl", "레코드 상세 JSONL", "원본·보완·출력 JSON과 상세 처리 내용"),
