@@ -3,6 +3,8 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
+import shutil
 import sqlite3
 import tempfile
 import uuid
@@ -27,6 +29,7 @@ class JobHistory:
         self.database = self.directory / 'history.sqlite3'
         with self._db() as db:
             db.execute('CREATE TABLE IF NOT EXISTS jobs (id TEXT PRIMARY KEY, kind TEXT NOT NULL, title TEXT NOT NULL, updated TEXT NOT NULL, payload TEXT NOT NULL)')
+            db.execute('CREATE TABLE IF NOT EXISTS hidden_jobs (id TEXT PRIMARY KEY)')
 
     @contextmanager
     def _db(self):
@@ -41,6 +44,7 @@ class JobHistory:
         with self._db() as db:
             db.execute('INSERT OR REPLACE INTO jobs VALUES (?, ?, ?, ?, ?)',
                        (job['id'], job['kind'], job['title'], job['updated'], json.dumps(job, ensure_ascii=False)))
+            db.execute('DELETE FROM hidden_jobs WHERE id=?', (job['id'],))
         return job['id']
 
     def get(self, job_id):
@@ -70,10 +74,11 @@ class JobHistory:
         return self.put({'id': job_id, 'kind': 'draft', 'title': previous['title'] if renamed else (settings.get('config') or {}).get('name', '진행 중 작업'),
                          'status': '설정 자동 저장', 'settings': settings, 'renamed': renamed})
 
-    def register_run(self, directory, summary=None, settings=None):
+    def register_run(self, directory, summary=None, settings=None, *, restore=False):
         directory = Path(directory).resolve()
-        summary = summary or json.loads((directory / 'reports/summary.json').read_text(encoding='utf-8-sig'))
         job_id = 'run-' + hashlib.sha256(os.path.normcase(str(directory)).encode()).hexdigest()
+        if not restore and self._hidden(job_id): return None
+        summary = summary or json.loads((directory / 'reports/summary.json').read_text(encoding='utf-8-sig'))
         previous = self.get(job_id)
         if settings is None:
             settings = (previous or {}).get('settings') or self._recover_settings(directory, summary)
@@ -107,10 +112,72 @@ class JobHistory:
         if not job or not title.strip(): raise ValueError('작업 이름을 입력하세요.')
         job['title'] = title.strip(); job['renamed'] = True; self.put(job)
 
+    def _hidden(self, job_id):
+        with self._db() as db:
+            return db.execute('SELECT 1 FROM hidden_jobs WHERE id=?', (job_id,)).fetchone() is not None
+
+    def delete(self, job_id):
+        """Forget a job without touching any input or output file."""
+        with self._db() as db:
+            row = db.execute('SELECT payload FROM jobs WHERE id=?', (job_id,)).fetchone()
+            if row is None: return None
+            db.execute('INSERT OR IGNORE INTO hidden_jobs VALUES (?)', (job_id,))
+            db.execute('DELETE FROM jobs WHERE id=?', (job_id,))
+        return json.loads(row[0])
+
+    def managed_target(self, job):
+        """Return only a result directory created under the program-owned workspace."""
+        if job.get('kind') not in ('preview', 'run', 'merge') or not job.get('directory'):
+            return None
+        folder = Path(job['directory']).absolute()
+        root = self.directory.absolute()
+        if os.path.normcase(str(root.resolve())) != os.path.normcase(str(root)):
+            return None
+        try: parts = folder.relative_to(root).parts
+        except ValueError: return None
+        if job['kind'] == 'preview':
+            valid = len(parts) == 4 and parts[:2] == ('results', '검증') and re.fullmatch(r'[0-9a-f]{32}', parts[2]) and parts[3] == '미리보기'
+            target = folder
+        elif job['kind'] == 'run':
+            valid = len(parts) == 3 and parts[0] == 'results' and re.fullmatch(r'\d{4}-\d{2}-\d{2}', parts[1]) and re.fullmatch(r'\d+', parts[2])
+            target = folder
+        else:
+            valid = len(parts) == 2 and parts[0] == 'merged' and re.fullmatch(r'[0-9a-f]{32}', parts[1])
+            target = folder
+        if not valid or not target.is_dir(): return None
+        current = root
+        for part in parts:
+            current = current / part
+            if current.is_symlink() or (hasattr(current, 'is_junction') and current.is_junction()): return None
+        if os.path.normcase(str(target.resolve())) != os.path.normcase(str(target)): return None
+        report = Path(job.get('report', '')).absolute()
+        expected = target/'reports'/'summary.json' if job['kind'] != 'merge' else None
+        if job['kind'] == 'merge':
+            if not report.is_file() or report.parent != target or report.suffix.lower() != '.xlsx': return None
+        elif report != expected or not report.is_file(): return None
+        return target
+
+    def delete_managed_files(self, job_id, checkpoint=lambda: None):
+        job = self.get(job_id)
+        if job is None: raise ValueError('보관함에서 작업을 찾을 수 없습니다.')
+        target = self.managed_target(job)
+        if target is None: raise ValueError('프로그램 보관함 내부의 결과만 파일까지 삭제할 수 있습니다.')
+        for current, folders, files in os.walk(target, followlinks=False):
+            checkpoint()
+            for name in (*folders, *files):
+                path = Path(current, name)
+                if path.is_symlink() or (hasattr(path, 'is_junction') and path.is_junction()):
+                    raise ValueError('결과 폴더에 외부 연결이 있어 파일 삭제를 중단했습니다.')
+        checkpoint()
+        if self.managed_target(job) != target: raise ValueError('결과 폴더 위치가 변경되었습니다.')
+        shutil.rmtree(target)
+        self.delete(job_id)
+        return target
+
     def merge_destination(self):
         return self.directory / 'merged' / uuid.uuid4().hex / '통합_보완결과서.xlsx'
 
-    def discover(self, roots, checkpoint=lambda: None):
+    def discover(self, roots, checkpoint=lambda: None, *, restore=False):
         """Scan only known output roots, pruning generated data and all links."""
         found, errors = 0, []
         seen = set()
@@ -125,7 +192,8 @@ class JobHistory:
                     folder = Path(current).parent.resolve()
                     if folder in seen: continue
                     seen.add(folder)
-                    try: self.register_run(folder); found += 1
+                    try:
+                        if self.register_run(folder, restore=restore) is not None: found += 1
                     except (OSError, ValueError, TypeError, KeyError) as exc: errors.append(f'{folder}: {exc}')
                     folders[:] = []
         return found, errors

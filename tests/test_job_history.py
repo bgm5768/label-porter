@@ -73,6 +73,40 @@ class HistoryTests(unittest.TestCase):
         for t in workers:t.join()
         self.assertEqual(errors,[]);self.assertEqual(self.store.list()[1],12)
 
+    def test_list_delete_keeps_files_and_discovery_does_not_restore_it(self):
+        result=self.result_run();key=self.store.register_run(result.directory,result.summary)
+        self.assertIsNotNone(self.store.delete(key))
+        self.assertTrue((result.directory/'reports/summary.json').is_file())
+        self.assertIsNone(JobHistory(self.store.directory).get(key))
+        self.assertEqual(self.store.discover([self.base/'results'])[0],0)
+        self.assertIsNone(self.store.get(key))
+        self.assertEqual(self.store.discover([self.base/'results'],restore=True)[0],1)
+        self.assertIsNotNone(self.store.get(key))
+
+    def test_file_delete_is_limited_to_program_owned_result(self):
+        root=self.store.directory/'results'/'검증'/('a'*32)
+        folder=root/'미리보기';reports=folder/'reports';reports.mkdir(parents=True)
+        (reports/'summary.json').write_text('{"preview":true,"status":"completed"}',encoding='utf-8')
+        (folder/'data.json').write_text('{}',encoding='utf-8')
+        sibling=root/'keep.txt';sibling.write_text('keep',encoding='utf-8')
+        key=self.store.register_run(folder)
+        self.assertEqual(self.store.managed_target(self.store.get(key)),folder)
+        self.assertEqual(self.store.delete_managed_files(key),folder)
+        self.assertFalse(folder.exists());self.assertEqual(sibling.read_text(encoding='utf-8'),'keep')
+        self.assertIsNone(self.store.get(key))
+        external=self.result_run();external_key=self.store.register_run(external.directory,external.summary)
+        self.assertIsNone(self.store.managed_target(self.store.get(external_key)))
+        with self.assertRaises(ValueError):self.store.delete_managed_files(external_key)
+        self.assertTrue((external.directory/'reports/summary.json').exists())
+
+    def test_managed_merge_delete_keeps_external_inputs(self):
+        output=self.store.merge_destination();output.parent.mkdir(parents=True)
+        output.write_bytes(b'xlsx');sidecar=output.with_suffix('.data.jsonl');sidecar.write_text('rows',encoding='utf-8')
+        key=self.store.register_merge(output,{},[self.result],'combined')
+        self.assertEqual(self.store.managed_target(self.store.get(key)),output.parent)
+        self.store.delete_managed_files(key)
+        self.assertFalse(output.parent.exists());self.assertTrue(self.result.exists())
+
 
 class HistoryUiTests(HistoryTests):
     def setUp(self):
@@ -125,3 +159,36 @@ class HistoryUiTests(HistoryTests):
         self.assertEqual(app.history.list(kind='run')[1],1)
         self.assertEqual(json.loads((app.last_run/'data/one.json').read_text(encoding='utf-8'))['value'],2)
         self.assertEqual(json.loads((self.source/'one.json').read_text())['value'],1)
+
+    def test_history_panel_list_delete(self):
+        from label_porter.gui import App
+        with patch.object(App,'_load_settings'):app=App(self.root)
+        result=self.result_run();key=app.history.register_run(result.directory,result.summary)
+        panel=app.history_panel;panel.refresh();panel.list.table.selection_set(key)
+        with patch('label_porter.history_ui.messagebox.askyesno',return_value=True):panel._delete()
+        self.assertIsNone(app.history.get(key))
+        self.assertTrue((result.directory/'reports/summary.json').exists())
+        self.assertNotIn(key,panel.list.table.get_children())
+
+    def test_history_panel_deletes_only_managed_result(self):
+        from label_porter.gui import App
+        with patch.object(App,'_load_settings'):app=App(self.root)
+        folder=app.history.directory/'results'/'검증'/('b'*32)/'미리보기'
+        reports=folder/'reports';reports.mkdir(parents=True)
+        (reports/'summary.json').write_text('{"preview":true,"status":"completed"}',encoding='utf-8')
+        key=app.history.register_run(folder)
+        panel=app.history_panel;panel.refresh();panel.list.table.selection_set(key)
+        with patch('label_porter.history_ui.messagebox.askyesno',return_value=True):panel._delete_files()
+        self.until(lambda:not panel.busy)
+        self.assertFalse(folder.exists());self.assertIsNone(app.history.get(key))
+        self.assertTrue(self.result.exists())
+
+    def test_json_viewer_opens_as_foreground_child(self):
+        from label_porter.gui import App
+        with patch.object(App,'_load_settings'):app=App(self.root)
+        app._json_viewer()
+        window=app.json_viewer.window
+        self.assertEqual(str(window.transient()),str(self.root))
+        self.root.update()
+        self.assertTrue(window.winfo_exists())
+        window.destroy()

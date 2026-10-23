@@ -293,6 +293,15 @@ class App(Workflow):
         initial = paths[chosen[0]] if chosen and chosen[0] < len(paths) else None
         self.json_viewer = JsonViewer(self.root, initial=initial, paths=[p for p in paths if p],
                                       on_close=self._json_viewer_closed)
+        window = self.json_viewer.window
+        window.transient(self.root)
+        window.lift(self.root)
+        window.after_idle(lambda: self._focus_json_viewer(window))
+
+    def _focus_json_viewer(self, window):
+        if window.winfo_exists():
+            window.lift(self.root)
+            window.focus_force()
 
     def _json_viewer_closed(self, viewer):
         if getattr(self, 'json_viewer', None) is viewer:
@@ -523,6 +532,20 @@ class App(Workflow):
         else: self._show_step(0)
         self._save_settings()
         self.status.set(f'“{job["title"]}” 작업을 불러왔습니다. 저장된 결과는 그대로 확인할 수 있습니다. 다시 처리하려면 입력을 확인하고 재검증하세요.')
+
+    def _forget_deleted_result(self, job):
+        directory = job.get('directory')
+        if directory and self.last_run and Path(directory) == self.last_run:
+            self.last_run = self.last_summary = None
+            self.restored_result = False
+            self.report_button.configure(state='disabled')
+            self.excel_button.configure(state='disabled')
+            self.folder_button.configure(state='disabled')
+            self.run_summary.set('보관함에서 결과 파일을 삭제했습니다. 다시 처리하면 새 결과가 생성됩니다.')
+        report = job.get('report')
+        if report and self.report_merger.saved == Path(report):
+            self.report_merger.saved = None
+            self.report_merger.open.configure(state='disabled')
 
     def _return_from_help(self):
         if self.route != "help" or not self.help_return: return

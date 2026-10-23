@@ -3,8 +3,9 @@ import os
 import queue
 import threading
 import tkinter as tk
+import uuid
 from pathlib import Path
-from tkinter import filedialog, simpledialog
+from tkinter import filedialog, messagebox, simpledialog
 from . import widgets as ttk
 from .job_history import export_job
 from .ui_lifecycle import UiEventQueue, release_variables
@@ -66,9 +67,11 @@ class HistoryPanel(ttk.Frame):
         self.detail=tk.StringVar(value='작업을 선택하세요.')
         primary=ttk.WrapBar(self);primary.pack(fill='x',pady=(0,8))
         self.list=JobList(self,self.store,select=self._selection); self.list.pack(fill='both',expand=True)
+        self.list.table.bind('<Double-1>', lambda e: self._load() if self.list.table.identify_region(e.x,e.y) == 'cell' else None)
+        self.list.table.bind('<Return>', lambda e: self._load())
         bar=ttk.WrapBar(self); bar.pack(fill='x',pady=8)
         self.buttons=[]
-        for number,(title,callback) in enumerate([('작업 불러오기',self._load),('현재 설정 저장',self._save),('이름 변경',self._rename),('HTML 결과서',lambda:self._open('html')),('Excel 결과서',lambda:self._open('excel')),('폴더 열기',lambda:self._open('folder')),('Excel 다른 이름으로 저장',lambda:self._export(True)),('결과 전체 ZIP 내보내기',lambda:self._export(False)),('보관함 새로고침',self.refresh),('기존 결과 폴더 등록',self._import)]):
+        for number,(title,callback) in enumerate([('작업 불러오기',self._load),('현재 설정 저장',self._save),('이름 변경',self._rename),('작업 삭제',self._delete),('HTML 결과서',lambda:self._open('html')),('Excel 결과서',lambda:self._open('excel')),('폴더 열기',lambda:self._open('folder')),('Excel 다른 이름으로 저장',lambda:self._export(True)),('결과 전체 ZIP 내보내기',lambda:self._export(False)),('결과 파일까지 삭제',self._delete_files),('보관함 새로고침',self.refresh),('기존 결과 폴더 등록',self._import)]):
             owner=primary if number<3 else bar
             b=ttk.Button(owner,text=title,command=callback,style='Primary.TButton' if number==0 else 'TButton');owner.add(b);self.buttons.append(b)
         ttk.Label(self,textvariable=self.detail,wraplength=950).pack(fill='x',pady=10)
@@ -103,6 +106,31 @@ class HistoryPanel(ttk.Frame):
         row=self._selected()
         if row:self.app._load_history_job(row)
 
+    def _delete(self):
+        row=self._selected()
+        if not row or self.busy:return
+        if not messagebox.askyesno('작업 삭제',f'“{row["title"]}”을 보관함 목록에서 삭제할까요?\n결과 파일과 원본 데이터는 그대로 유지됩니다.',parent=self):return
+        self.store.delete(row['id'])
+        if row['id']==self.app.draft_id:self.app.draft_id='draft-'+uuid.uuid4().hex
+        self.list.refresh();self.app.report_merger.refresh_history()
+        self.detail.set('작업을 선택하세요.')
+        self.message.set('보관함 목록에서 삭제했습니다. 데이터 파일은 변경하지 않았습니다.')
+
+    def _delete_files(self):
+        row=self._selected()
+        if not row or self.busy:return
+        target=self.store.managed_target(row)
+        if target is None:
+            self.message.set('파일 삭제는 프로그램 전용 보관함의 결과에만 사용할 수 있습니다. 직접 지정한 위치는 “작업 삭제”로 목록에서만 제거하세요.')
+            return
+        if not messagebox.askyesno('결과 파일까지 삭제',f'“{row["title"]}”의 프로그램 보관함 결과 폴더를 삭제할까요?\n\n{target}\n\n원본·보완 입력 파일은 삭제하지 않습니다.',parent=self):return
+        def done():
+            self.app._forget_deleted_result(row)
+            self.detail.set('작업을 선택하세요.')
+            self.app.report_merger.refresh_history()
+        self.background(lambda check:f'결과 파일과 작업 기록을 삭제했습니다: {self.store.delete_managed_files(row["id"],check)}',
+                        '프로그램 보관함의 결과 파일을 삭제하고 있습니다…',done)
+
     def _rename(self):
         row=self._selected()
         if not row:return
@@ -129,16 +157,17 @@ class HistoryPanel(ttk.Frame):
 
     def _import(self):
         root=filedialog.askdirectory(parent=self,title='기존 처리 결과를 포함하는 폴더 등록 (파일 이동 없음)')
-        if root:self.discover([root])
+        if root:self.discover([root],restore=True)
 
-    def discover(self,roots):
+    def discover(self,roots,restore=False):
         def work(check):
-            count,errors=self.store.discover(roots,check)
+            count,errors=self.store.discover(roots,check,restore=restore)
             return f'기존 작업 {count}개 확인 · 파일 이동/복사 없음' + (f'\n등록 실패 {len(errors)}개: '+errors[0] if errors else '')
         self.background(work,'기존 결과 위치를 확인하고 있습니다…')
 
-    def background(self,work,message):
+    def background(self,work,message,on_done=None):
         if self.busy:return
+        self.on_done=on_done
         self.busy=True;self.cancel.clear();self.message.set(message);self.progress.start()
         for b in self.buttons:b.configure(state='disabled')
         events,cancel=self.events,self.cancel
@@ -156,6 +185,8 @@ class HistoryPanel(ttk.Frame):
         try:
             kind,value=self.events.get_nowait();self.busy=False;self.progress.stop()
             for b in self.buttons:b.configure(state='normal')
+            callback=self.on_done;self.on_done=None
+            if kind=='done' and callback:callback()
             self.message.set(('완료 · ' if kind=='done' else '처리하지 못했습니다: ')+str(value));self.refresh()
             self.app.report_merger.refresh_history()
         except queue.Empty:pass
